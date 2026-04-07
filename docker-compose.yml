@@ -1,0 +1,27 @@
+services:
+  git-sidecar:
+    build: .
+    volumes:
+      # Mount your projects directory
+      - ~/Projects:/projects
+      # Mount git config (read-only)
+      - ~/.gitconfig:/root/.gitconfig:ro
+      # Mount only specific SSH keys (read-only)
+      - ~/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro
+      - ~/.ssh/id_ed25519.pub:/root/.ssh/id_ed25519.pub:ro
+      - ~/.ssh/known_hosts:/root/.ssh/known_hosts:ro
+    environment:
+      - PROJECTS_DIR=/projects
+      - SIDECAR_HOST=0.0.0.0
+      - SIDECAR_PORT=8900
+      - ALLOWED_BRANCH_PREFIXES=task/,dependabot/
+      - SIDECAR_TOKEN_FILENAME=.git-sidecar-token
+    networks:
+      - git-sidecar-net
+    restart: unless-stopped
+
+networks:
+  git-sidecar-net:
+    # External network — create once, both sidecar and dev containers join it
+    # Create with: docker network create git-sidecar-net
+    external: true
