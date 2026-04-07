@@ -1,26 +1,9 @@
 {
-  "name": "Git Sidecar Dev",
   "build": {
     "dockerfile": "Dockerfile"
   },
-  "runArgs": ["--cpus=4", "--network=git-sidecar-net"],
-  "mounts": [
-    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached"
-  ],
   "customizations": {
     "vscode": {
-      "settings": {
-        "python.defaultInterpreterPath": "/usr/local/bin/python",
-        "[python]": {
-          "editor.defaultFormatter": "charliermarsh.ruff",
-          "editor.formatOnSave": true,
-          "editor.codeActionsOnSave": {
-            "source.fixAll": "explicit",
-            "source.organizeImports": "explicit"
-          }
-        },
-        "python.testing.pytestEnabled": true
-      },
       "extensions": [
         "ms-python.python",
         "ms-python.vscode-pylance",
@@ -28,9 +11,29 @@
         "tamasfe.even-better-toml",
         "eamodio.gitlens",
         "anthropic.claude-code"
-      ]
+      ],
+      "settings": {
+        "[python]": {
+          "editor.codeActionsOnSave": {
+            "source.fixAll": "explicit",
+            "source.organizeImports": "explicit"
+          },
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true
+        },
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.testing.pytestEnabled": true
+      }
     }
   },
+  "mounts": [
+    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached"
+  ],
+  "name": "Git Sidecar Dev",
   "postCreateCommand": "uv sync 2>/dev/null || true",
-  "remoteUser": "vscode"
+  "remoteUser": "vscode",
+  "runArgs": [
+    "--cpus=4",
+    "--network=git-sidecar-net"
+  ]
 }

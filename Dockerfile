@@ -14,14 +14,19 @@ RUN apt-get update && \
 # Install uv for fast dependency resolution
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+# Create non-root user
+RUN groupadd --gid 1000 sidecar && \
+    useradd --uid 1000 --gid sidecar --create-home sidecar && \
+    mkdir -p /projects /home/sidecar/.ssh /home/sidecar/.config/gh && \
+    chown -R sidecar:sidecar /projects /home/sidecar/.ssh /home/sidecar/.config/gh
+
 WORKDIR /app
 
-# Copy project files
+# Copy project files and install as root, then hand off ownership
 COPY pyproject.toml uv.lock README.md ./
 COPY git_sidecar/ ./git_sidecar/
-
-# Install the package
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev && \
+    chown -R sidecar:sidecar /app
 
 # Default configuration
 ENV PROJECTS_DIR=/projects
@@ -29,5 +34,7 @@ ENV SIDECAR_HOST=0.0.0.0
 ENV SIDECAR_PORT=8900
 
 EXPOSE 8900
+
+USER sidecar
 
 CMD ["uv", "run", "git-sidecar"]

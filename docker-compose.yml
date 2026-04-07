@@ -5,11 +5,13 @@ services:
       # Mount your projects directory
       - ~/Projects:/projects
       # Mount git config (read-only)
-      - ~/.gitconfig:/root/.gitconfig:ro
+      - ~/.gitconfig:/home/sidecar/.gitconfig:ro
       # Mount only specific SSH keys (read-only)
-      - ~/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro
-      - ~/.ssh/id_ed25519.pub:/root/.ssh/id_ed25519.pub:ro
-      - ~/.ssh/known_hosts:/root/.ssh/known_hosts:ro
+      - ~/.ssh/id_ed25519:/home/sidecar/.ssh/id_ed25519:ro
+      - ~/.ssh/id_ed25519.pub:/home/sidecar/.ssh/id_ed25519.pub:ro
+      - ~/.ssh/known_hosts:/home/sidecar/.ssh/known_hosts:ro
+      # Persist GitHub CLI credentials across rebuilds
+      - gh-config:/home/sidecar/.config/gh
     environment:
       - PROJECTS_DIR=/projects
       - SIDECAR_HOST=0.0.0.0
@@ -19,6 +21,9 @@ services:
     networks:
       - git-sidecar-net
     restart: unless-stopped
+
+volumes:
+  gh-config:
 
 networks:
   git-sidecar-net:
