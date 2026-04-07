@@ -291,13 +291,16 @@ def _extract_failed_run_ids(checks_output: str) -> list[str]:
     run_ids: list[str] = []
     seen: set[str] = set()
     for line in checks_output.splitlines():
-        if "fail" in line.lower() and "/runs/" in line:
-            match = re.search(r"/runs/(\d+)", line)
-            if match:
-                run_id = match.group(1)
-                if run_id not in seen:
-                    seen.add(run_id)
-                    run_ids.append(run_id)
+        if "fail" not in line.lower() or "/runs/" not in line:
+            continue
+        match = re.search(r"/runs/(\d+)", line)
+        if not match:
+            continue
+        run_id = match.group(1)
+        if run_id in seen:
+            continue
+        seen.add(run_id)
+        run_ids.append(run_id)
     return run_ids
 
 

@@ -305,10 +305,28 @@ class TestGitWorktree:
             ["git", "worktree", "remove", wt_path], cwd=str(REPO_PATH)
         )
 
-    def test_add_blocked(self, mock_verify):
-        """Add action is blocked."""
-        with pytest.raises(ValidationError, match="Adding worktrees is not permitted"):
-            git_write.git_worktree("my-org/my-repo", "token", action="add")
+    def test_add(self, mock_verify, mock_run):
+        """Add action calls git worktree add with path."""
+        git_write.git_worktree(
+            "my-org/my-repo", "token", action="add", path="/worktrees/new-wt"
+        )
+        mock_run.assert_called_once_with(
+            ["git", "worktree", "add", "/worktrees/new-wt"], cwd=str(REPO_PATH)
+        )
+
+    def test_add_with_branch(self, mock_verify, mock_run):
+        """Add action with branch calls git worktree add with -b flag."""
+        git_write.git_worktree(
+            "my-org/my-repo",
+            "token",
+            action="add",
+            path="/worktrees/new-wt",
+            branch="task/new-feature",
+        )
+        mock_run.assert_called_once_with(
+            ["git", "worktree", "add", "/worktrees/new-wt", "-b", "task/new-feature"],
+            cwd=str(REPO_PATH),
+        )
 
     def test_invalid_action(self, mock_verify):
         """Arbitrary invalid action is blocked."""

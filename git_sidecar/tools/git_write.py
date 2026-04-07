@@ -12,7 +12,7 @@ from git_sidecar.validation import (
 _config: SidecarConfig | None = None
 
 ALLOWED_STASH_ACTIONS = frozenset({"push", "pop", "apply", "drop", "show"})
-ALLOWED_WORKTREE_ACTIONS = frozenset({"list", "remove"})
+ALLOWED_WORKTREE_ACTIONS = frozenset({"add", "list", "remove"})
 
 
 def init(config: SidecarConfig) -> None:
@@ -163,18 +163,23 @@ def git_worktree(
     token: str,
     action: str = "list",
     path: str | None = None,
+    branch: str | None = None,
 ) -> dict:
-    """Manage worktrees. action: list, remove."""
+    """Manage worktrees. action: add, list, remove."""
     if action not in ALLOWED_WORKTREE_ACTIONS:
         allowed = ", ".join(sorted(ALLOWED_WORKTREE_ACTIONS))
         raise ValidationError(
-            f"Invalid worktree action '{action}'. Allowed: {allowed}. "
-            "Adding worktrees is not permitted."
+            f"Invalid worktree action '{action}'. Allowed: {allowed}"
         )
 
     config = _get_config()
     repo_path = auth.verify_token(config, repo, token)
     args = ["git", "worktree", action]
+
+    if action == "add" and path is not None:
+        args.append(path)
+        if branch is not None:
+            args.extend(["-b", branch])
 
     if action == "remove" and path is not None:
         args.append(path)

@@ -1,3 +1,7 @@
+# Example docker-compose configuration for git-sidecar.
+# This file is intended to be modified per user to adapt to their use case.
+# Adjust volume mounts, environment variables, and network settings as needed.
+
 services:
   git-sidecar:
     build: .
