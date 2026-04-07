@@ -30,7 +30,7 @@
     "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind,consistency=cached"
   ],
   "name": "Git Sidecar Dev",
-  "postCreateCommand": "uv sync 2>/dev/null || true",
+  "postCreateCommand": "./scripts/configure.sh",
   "remoteUser": "vscode",
   "runArgs": [
     "--cpus=4",
