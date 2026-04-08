@@ -21,6 +21,11 @@ def main() -> None:
         default=".git-sidecar-token",
         help="Token filename (default: .git-sidecar-token).",
     )
+    parser.add_argument(
+        "--no-gitignore",
+        action="store_true",
+        help="Skip adding the token file to .gitignore.",
+    )
     args = parser.parse_args()
 
     directory: pathlib.Path = args.directory.resolve()
@@ -40,6 +45,28 @@ def main() -> None:
     token = secrets.token_urlsafe(32)
     token_path.write_text(token)
     print(f"Token written to {token_path}")  # noqa: T201
+
+    if not args.no_gitignore:
+        _add_to_gitignore(directory, args.filename)
+
+
+def _add_to_gitignore(directory: pathlib.Path, filename: str) -> None:
+    """Append the token filename to .gitignore if not already present."""
+    gitignore = directory / ".gitignore"
+
+    if gitignore.exists():
+        content = gitignore.read_text()
+        if filename in content.splitlines():
+            return
+        # Ensure we start on a new line
+        if content and not content.endswith("\n"):
+            content += "\n"
+        content += filename + "\n"
+        gitignore.write_text(content)
+    else:
+        gitignore.write_text(filename + "\n")
+
+    print(f"Added {filename} to {gitignore}")  # noqa: T201
 
 
 if __name__ == "__main__":
