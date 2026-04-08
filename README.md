@@ -19,12 +19,14 @@ docker build -t git-sidecar .
 
 docker run -d \
   --name git-sidecar \
+  --restart unless-stopped \
   --network git-sidecar-net \
   -v ~/Projects:/projects \
   -v ~/.gitconfig:/home/sidecar/.gitconfig:ro \
   -v ~/.ssh/id_ed25519:/home/sidecar/.ssh/id_ed25519:ro \
   -v ~/.ssh/known_hosts:/home/sidecar/.ssh/known_hosts:ro \
   -v gh-config:/home/sidecar/.config/gh \
+  -e ALLOWED_BRANCH_PREFIXES=task/,dependabot/ \
   git-sidecar
 ```
 
