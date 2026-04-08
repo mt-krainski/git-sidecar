@@ -37,4 +37,4 @@ EXPOSE 8900
 
 USER sidecar
 
-CMD ["uv", "run", "git-sidecar"]
+CMD ["uv", "run", "python", "-m", "git_sidecar"]
