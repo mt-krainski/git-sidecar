@@ -168,9 +168,7 @@ def git_worktree(
     """Manage worktrees. action: add, list, remove."""
     if action not in ALLOWED_WORKTREE_ACTIONS:
         allowed = ", ".join(sorted(ALLOWED_WORKTREE_ACTIONS))
-        raise ValidationError(
-            f"Invalid worktree action '{action}'. Allowed: {allowed}"
-        )
+        raise ValidationError(f"Invalid worktree action '{action}'. Allowed: {allowed}")
 
     config = _get_config()
     repo_path = auth.verify_token(config, repo, token)

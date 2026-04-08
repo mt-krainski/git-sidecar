@@ -431,7 +431,7 @@ class TestGhPrReply:
             github.gh_pr_reply("r", "t", 42, "LGTM", comment_id=99)
 
         cmd = mock_run.call_args_list[1][0][0]
-        assert f"repos/{REPO_SPEC}/pulls/comments/99/replies" in cmd
+        assert f"repos/{REPO_SPEC}/pulls/42/comments/99/replies" in cmd
         assert "body=LGTM" in cmd
 
 
