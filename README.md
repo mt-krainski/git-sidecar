@@ -55,23 +55,23 @@ The agent provides this token with every tool call. The sidecar verifies it usin
 
 All configuration is via environment variables:
 
-| Variable | Default | Description |
-|---|---|---|
-| `PROJECTS_DIR` | `/projects` | Mount point for project directories |
-| `SIDECAR_HOST` | `0.0.0.0` | Server bind address |
-| `SIDECAR_PORT` | `8900` | Server port |
-| `ALLOWED_BRANCH_PREFIXES` | `task/,dependabot/` | Comma-separated branch prefixes agents can create/push |
-| `SIDECAR_TOKEN_FILENAME` | `.git-sidecar-token` | Name of the per-project token file |
+| Variable                  | Default              | Description                                            |
+| ------------------------- | -------------------- | ------------------------------------------------------ |
+| `PROJECTS_DIR`            | `/projects`          | Mount point for project directories                    |
+| `SIDECAR_HOST`            | `0.0.0.0`            | Server bind address                                    |
+| `SIDECAR_PORT`            | `8900`               | Server port                                            |
+| `ALLOWED_BRANCH_PREFIXES` | `task/,dependabot/`  | Comma-separated branch prefixes agents can create/push |
+| `SIDECAR_TOKEN_FILENAME`  | `.git-sidecar-token` | Name of the per-project token file                     |
 
 ## Volume mounts
 
-| Mount | Purpose |
-|---|---|
-| `~/Projects:/projects` | Project directories the agent can access |
-| `~/.gitconfig:/home/sidecar/.gitconfig:ro` | Git user config (name, email, SSH command) |
-| `~/.ssh/id_ed25519:/home/sidecar/.ssh/id_ed25519:ro` | SSH private key for git operations |
-| `~/.ssh/known_hosts:/home/sidecar/.ssh/known_hosts:ro` | SSH known hosts |
-| `gh-config:/home/sidecar/.config/gh` | Persistent GitHub CLI credentials |
+| Mount                                                  | Purpose                                    |
+| ------------------------------------------------------ | ------------------------------------------ |
+| `~/Projects:/projects`                                 | Project directories the agent can access   |
+| `~/.gitconfig:/home/sidecar/.gitconfig:ro`             | Git user config (name, email, SSH command) |
+| `~/.ssh/id_ed25519:/home/sidecar/.ssh/id_ed25519:ro`   | SSH private key for git operations         |
+| `~/.ssh/known_hosts:/home/sidecar/.ssh/known_hosts:ro` | SSH known hosts                            |
+| `gh-config:/home/sidecar/.config/gh`                   | Persistent GitHub CLI credentials          |
 
 Adjust SSH key paths and project directories to match your setup.
 
