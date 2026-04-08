@@ -6,6 +6,12 @@ The sidecar holds SSH keys and GitHub credentials; the agent never sees them. Co
 
 ## Quick start
 
+Create the shared Docker network (once):
+
+```bash
+docker network create git-sidecar-net
+```
+
 Build and run:
 
 ```bash
@@ -22,18 +28,13 @@ docker run -d \
   git-sidecar
 ```
 
-Create the shared network first (if it doesn't exist):
-
-```bash
-docker network create git-sidecar-net
-```
-
 ## Authentication
 
-Each project that an agent should access needs a `.git-sidecar-token` file in its root directory. Generate one:
+Each project that an agent should access needs a `.git-sidecar-token` file in its root directory. Generate one with the included CLI tool:
 
 ```bash
-python3 -c "import secrets; print(secrets.token_urlsafe(32))" > ~/Projects/my-repo/.git-sidecar-token
+uv tool install .
+git-sidecar-token ~/Projects/my-repo
 ```
 
 The agent provides this token with every tool call. The sidecar verifies it using timing-safe comparison before executing any operation.

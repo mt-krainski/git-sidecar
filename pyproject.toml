@@ -18,6 +18,7 @@ dev = [
 
 [project.scripts]
 git-sidecar = "git_sidecar.__main__:main"
+git-sidecar-token = "git_sidecar.token_cli:main"
 
 [build-system]
 requires = ["hatchling"]
