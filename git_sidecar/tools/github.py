@@ -253,7 +253,9 @@ def gh_pr_reply(
     owner, repo_name = _get_github_repo(str(repo_path))
 
     if comment_id is not None:
-        path = f"repos/{owner}/{repo_name}/pulls/{pr_number}/comments/{comment_id}/replies"
+        path = (
+            f"repos/{owner}/{repo_name}/pulls/{pr_number}/comments/{comment_id}/replies"
+        )
         cmd = [
             "gh",
             "api",
