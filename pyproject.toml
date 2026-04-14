@@ -6,7 +6,7 @@ authors = [{name = "Matt Krainski", email = "mt.krainski@gmail.com"}]
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "mcp[cli]>=1.0,<2",
+    "mcp[cli]>=1.27.0,<2",
 ]
 
 [dependency-groups]
