@@ -6,29 +6,43 @@ The sidecar holds SSH keys and GitHub credentials; the agent never sees them. Co
 
 ## Quick start
 
-Create the shared Docker network (once):
+Build the image, aligning the in-container user with the host user/group that owns the projects directory. This makes files written by the sidecar land on the host with the expected ownership:
 
 ```bash
-docker network create git-sidecar-net
+docker build \
+  --build-arg UID=$(id -u <agent-user>) \
+  --build-arg GID=$(getent group <shared-group> | cut -d: -f3) \
+  -t git-sidecar .
 ```
 
-Build and run:
+Run, publishing the SSE endpoint to host loopback so a host-side MCP client can reach it. SSH keys and `gh` credentials live in named volumes so they survive container restarts and stay isolated from host user keys:
 
 ```bash
-docker build -t git-sidecar .
-
 docker run -d \
   --name git-sidecar \
   --restart unless-stopped \
-  --network git-sidecar-net \
-  -v ~/Projects:/projects \
+  -p 127.0.0.1:8900:8900 \
+  -v /home/<agent-user>/Projects:/projects \
   -v ~/.gitconfig:/home/sidecar/.gitconfig:ro \
-  -v ~/.ssh/id_ed25519:/home/sidecar/.ssh/id_ed25519:ro \
-  -v ~/.ssh/known_hosts:/home/sidecar/.ssh/known_hosts:ro \
+  -v sidecar-ssh:/home/sidecar/.ssh \
   -v gh-config:/home/sidecar/.config/gh \
   -e ALLOWED_BRANCH_PREFIXES=task/,dependabot/ \
   git-sidecar
 ```
+
+The MCP client connects to `http://127.0.0.1:8900/sse`.
+
+If the MCP client also runs in a container, replace `-p 127.0.0.1:8900:8900` with a shared bridge network (`docker network create git-sidecar-net` once, then `--network git-sidecar-net` on both containers).
+
+### First-run setup
+
+Authenticate `gh` once — choose SSH as the protocol and let it generate and upload a dedicated SSH key for you. The key lands in `~/.ssh/` and gh credentials in `~/.config/gh/`, both held by named volumes so they survive restarts:
+
+```bash
+docker exec -it git-sidecar gh auth login
+```
+
+GitHub host keys are pre-baked into `/etc/ssh/ssh_known_hosts` at image build, so `git fetch`/`push` won't prompt or fail on first use.
 
 ## Authentication
 
@@ -65,15 +79,14 @@ All configuration is via environment variables:
 
 ## Volume mounts
 
-| Mount                                                  | Purpose                                    |
-| ------------------------------------------------------ | ------------------------------------------ |
-| `~/Projects:/projects`                                 | Project directories the agent can access   |
-| `~/.gitconfig:/home/sidecar/.gitconfig:ro`             | Git user config (name, email, SSH command) |
-| `~/.ssh/id_ed25519:/home/sidecar/.ssh/id_ed25519:ro`   | SSH private key for git operations         |
-| `~/.ssh/known_hosts:/home/sidecar/.ssh/known_hosts:ro` | SSH known hosts                            |
-| `gh-config:/home/sidecar/.config/gh`                   | Persistent GitHub CLI credentials          |
+| Mount                                      | Purpose                                                         |
+| ------------------------------------------ | --------------------------------------------------------------- |
+| `~/Projects:/projects`                     | Project directories the agent can access                        |
+| `~/.gitconfig:/home/sidecar/.gitconfig:ro` | Git user config (name, email, SSH command) — read from host     |
+| `sidecar-ssh:/home/sidecar/.ssh`           | Dedicated SSH key + known_hosts, generated and held by sidecar  |
+| `gh-config:/home/sidecar/.config/gh`       | Persistent GitHub CLI credentials                               |
 
-Adjust SSH key paths and project directories to match your setup.
+Adjust the projects directory to match your setup.
 
 ## Security model
 
@@ -84,16 +97,6 @@ Adjust SSH key paths and project directories to match your setup.
 - Force-push flags are rejected
 - Path traversal is blocked at multiple layers
 - Branch names must match configured prefixes
-
-## GitHub CLI setup
-
-After first launch, authenticate the GitHub CLI inside the sidecar:
-
-```bash
-docker exec -it git-sidecar gh auth login
-```
-
-Credentials persist in the `gh-config` volume across container rebuilds.
 
 ## Development
 

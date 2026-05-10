@@ -11,14 +11,23 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends gh && \
     rm -rf /var/lib/apt/lists/*
 
+# Pre-trust github.com host keys so ssh doesn't prompt or fail on first use.
+RUN ssh-keyscan -t rsa,ecdsa,ed25519 github.com > /etc/ssh/ssh_known_hosts
+
 # Install uv for fast dependency resolution
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Create non-root user
-RUN groupadd --gid 1000 sidecar && \
-    useradd --uid 1000 --gid sidecar --create-home sidecar && \
+# Create non-root user. UID/GID are build args so the in-container user
+# can be aligned with the host user/group that owns the bind-mounted
+# projects directory — files written by the container then land on the
+# host with the expected ownership instead of orphan numeric IDs.
+ARG UID=1000
+ARG GID=1000
+RUN groupadd --gid ${GID} sidecar && \
+    useradd --uid ${UID} --gid sidecar --create-home sidecar && \
     mkdir -p /projects /home/sidecar/.ssh /home/sidecar/.config/gh && \
-    chown -R sidecar:sidecar /projects /home/sidecar/.ssh /home/sidecar/.config/gh
+    chown -R sidecar:sidecar /projects /home/sidecar/.ssh /home/sidecar/.config/gh && \
+    git config --system safe.directory '/projects/*'
 
 WORKDIR /app
 
