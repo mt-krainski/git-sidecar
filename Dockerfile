@@ -46,4 +46,8 @@ EXPOSE 8900
 
 USER sidecar
 
-CMD ["uv", "run", "python", "-m", "git_sidecar"]
+# umask 002 makes files written into the bind-mounted projects directory
+# group-writable, so a host-side agent user that shares the same group
+# can collaborate on them. Adjust at deploy time if your topology
+# doesn't need this.
+CMD ["sh", "-c", "umask 002 && exec uv run python -m git_sidecar"]

@@ -49,7 +49,9 @@ GitHub host keys are pre-baked into `/etc/ssh/ssh_known_hosts` at image build, s
 
 ## Authentication
 
-Each project that an agent should access needs a `.git-sidecar-token` file in its root directory. Generate one with the included CLI tool:
+Each project that an agent should access needs a `.git-sidecar-token` file in its root directory. The agent must be able to read it — either generate the token as the agent user, or adjust file permissions afterwards so the agent has read access.
+
+Generate with the included CLI tool:
 
 ```bash
 uv tool install .
