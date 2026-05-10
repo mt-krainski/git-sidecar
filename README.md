@@ -1,5 +1,8 @@
 # git-sidecar
 
+> [!WARNING]
+> **Work in progress — security is not guaranteed.** Effective isolation depends substantially on your individual host setup: Docker group membership, file ownership and umask, SSH key permissions, and which user accounts can `docker exec` into the running container all materially change what a compromised agent can reach. The design is meant to be hardenable (rootless Docker, dedicated unprivileged user, no Docker socket access for the agent), but that polish isn't here yet. Don't point this at credentials you can't afford to lose.
+
 A containerized MCP server that provides secure, credential-isolated Git and GitHub operations for AI agents running in sandboxed environments.
 
 The sidecar holds SSH keys and GitHub credentials; the agent never sees them. Communication happens via MCP tools over SSE, with each operation scoped to a specific repository and authorized via a shared secret token file.
