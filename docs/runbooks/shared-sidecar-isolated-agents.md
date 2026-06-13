@@ -39,10 +39,23 @@ Why agents stay isolated from each other even though one container can reach the
   in the `docker` group) cannot reach — an agent can't `docker exec` into the sidecar to
   steal the shared credentials.
 
+> **Known gap — git's repo-level code execution.** The sidecar runs `git` inside
+> repos the agents can write to, and git executes repo-controlled code: hooks in
+> `.git/hooks/`, and commands configured in `.git/config` (`core.fsmonitor`,
+> filter/diff drivers). A malicious agent can plant these in its *own* repo and get
+> code execution as the sidecar uid — which is in every agent's group and can read
+> the shared credentials. Disabling hooks helps (see the `GIT_CONFIG_*` environment
+> entries in the start command, which override repo-local config) but does not close
+> the `.git/config`-driven vectors. Treat cross-agent isolation in this model as a
+> hardening layer against accidents and casual misuse, not a guarantee against a
+> determined malicious agent.
+
 Tradeoffs you're accepting:
 
 - All agents push under **one** GitHub identity.
-- A compromise of the sidecar process itself reaches every mounted `Projects` tree.
+- A compromise of the sidecar process reaches every mounted `Projects` tree — and per
+  the known gap above, any served agent has a plausible path to exactly that
+  compromise. Size the blast radius accordingly.
 
 If either is unacceptable, run one sidecar per agent instead.
 
@@ -215,6 +228,9 @@ sudo docker build \
 sudo docker exec -it git-sidecar gh auth login
 ```
 
+uid 3000 is just an example — any free system uid works; pick one and use it
+consistently in the build args, `--user` flag, and re-owning recipes below.
+
 ### Start it — the single command
 
 Edit the `AGENTS` list; that's the only thing that changes. Re-running this command
@@ -239,11 +255,19 @@ sudo docker run -d --name git-sidecar --restart unless-stopped \
   -v sidecar-ssh:/home/sidecar/.ssh \
   -v gh-config:/home/sidecar/.config/gh \
   -e ALLOWED_BRANCH_PREFIXES=task/,dependabot/ \
+  -e GIT_CONFIG_COUNT=1 \
+  -e GIT_CONFIG_KEY_0=core.hooksPath \
+  -e GIT_CONFIG_VALUE_0=/dev/null \
   git-sidecar:shared
 ```
 
 The loop puts one `--group-add <gid> -v /home/<u>/Projects:/projects/<u>` pair per agent
 into `args` — e.g. for `agent-01`: `--group-add 1004 -v /home/agent-01/Projects:/projects/agent-01`.
+
+The `GIT_CONFIG_*` entries disable git hooks for every git invocation the sidecar
+makes (environment config outranks a repo's own `.git/config`, so an agent can't
+re-enable them locally). This raises the bar described in the known-gap note above;
+it does not eliminate the other `.git/config` vectors.
 
 > **Build the array; don't inline a `$(for …)` substitution.** If a newline lands
 > mid-substitution when you paste an inlined one-liner, the shell splits the argument
@@ -258,7 +282,7 @@ user, drop it in the repo root with the bundled CLI (see the
 [README](../../README.md#authentication) for installing `git-sidecar-token`):
 
 ```bash
-# as the agent user, inside the repo:
+# as the agent user:
 git-sidecar-token ~/Projects/<repo>     # writes ~/Projects/<repo>/.git-sidecar-token
 ```
 
@@ -284,9 +308,15 @@ claude mcp add --transport sse -s user git-sidecar http://127.0.0.1:8900/sse
 The agent addresses repos as `<agent>/<repo>` (e.g. `agent-01/my-repo`), authenticating
 with the per-repo `.git-sidecar-token` from its own `Projects` tree.
 
-If the agent's MCP client is itself a container, replace `-p 127.0.0.1:8900:8900` in the
-start command with a shared docker network (`docker network create git-sidecar-net`;
-`--network git-sidecar-net` on both containers) so it can reach the sidecar by name.
+The README's containerized-client advice (a shared docker network) does **not** apply
+here: the sidecar lives on the rootful daemon and the agent's containers on the
+agent's rootless daemon, and a docker network cannot span two daemons. If the agent's
+MCP client runs as a host process under the agent's account (the common case), the
+loopback-published port just works. If the client must run inside one of the agent's
+rootless containers, it has to reach the host's loopback, which rootless Docker
+blocks by default — you'd need to enable slirp4netns host-loopback for that agent's
+daemon and point the client at the magic host address, accepting the slight widening
+of what the container can reach on the host.
 
 ## Verify the deployment
 
