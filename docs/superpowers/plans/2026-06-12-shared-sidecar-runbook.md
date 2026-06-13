@@ -11,7 +11,7 @@
 **Important context for the implementer:**
 
 - This is a **documentation-only** change. No Python code, no tests to write. TDD does not apply; verification steps are syntax/link/hook checks instead.
-- The source material lives in `tmp-docs/` (untracked): `2026-06-12-provision-rootless-agent-user.md`, `2026-06-12-shared-git-sidecar.md`, `provision-agent-user.sh`. You do NOT need to read them — the output file's full content is inlined below. The content below has already been generalized: host-specific names (`matt`, `claude-yolo`, `claude-gravital`), references to a companion doc that doesn't exist in this repo (`2026-05-10-rootless-docker-setup.md`), legacy `agents`-group migration notes, and a personal Claude Code `settings.json` blob have all been removed or genericized. The `provision-agent-user.sh` script is intentionally NOT ported — provisioning is documented as explicit shell steps only.
+- The source material lives in `tmp-docs/` (untracked): `2026-06-12-provision-rootless-agent-user.md`, `2026-06-12-shared-git-sidecar.md`, `provision-agent-user.sh`. You do NOT need to read them — the output file's full content is inlined below. The content below has already been generalized: host-specific usernames and paths, references to a companion doc that doesn't exist in this repo, legacy shared-group migration notes, and a personal Claude Code `settings.json` blob have all been removed or genericized. The `provision-agent-user.sh` script is intentionally NOT ported — provisioning is documented as explicit shell steps only.
 - Work on branch `task/shared-sidecar-runbook` (the `task/` prefix matches the sidecar's own `ALLOWED_BRANCH_PREFIXES`, so the branch can be pushed through the sidecar's MCP tools if desired).
 - Pre-commit hooks (`trailing-whitespace`, `end-of-file-fixer`, gitleaks) run on commit. If a commit fails because a hook auto-fixed whitespace, run `git add -u` and re-run the same commit command.
 
@@ -24,7 +24,7 @@
 - [ ] **Step 1: Create the working branch**
 
 ```bash
-cd /home/claude-yolo/Projects/git-sidecar
+cd /path/to/git-sidecar
 git checkout -b task/shared-sidecar-runbook
 ```
 
