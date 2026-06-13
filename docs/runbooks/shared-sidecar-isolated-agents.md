@@ -1,0 +1,373 @@
+# Runbook: one shared sidecar, many isolated agents
+
+> **This is one deployment model, not the only one.** git-sidecar doesn't prescribe how
+> you run it. The [README quick start](../../README.md#quick-start) is the simplest model —
+> one sidecar on one user's Docker daemon, serving one agent. Another valid model is one
+> sidecar *per* agent (own credential volumes, own `gh auth login` each), which buys
+> per-agent GitHub identities at the cost of managing N credential sets. This runbook
+> documents a third: **several sandboxed agents on one host, mutually isolated, sharing
+> one GitHub identity through a single sidecar.** Treat it as a worked example of a
+> defensible configuration, not a prescription.
+
+## The model
+
+A single git-sidecar container runs on the administrator's **rootful** Docker daemon. It
+mounts every agent's `Projects` directory and runs as a dedicated service uid
+(`gitsidecar`, 3000). Because it is one container, it holds **one** SSH key and one `gh`
+credential set in named volumes — you authenticate once.
+
+Three kinds of principals on the host:
+
+| Principal                            | Privileges                                                              | Role                                                            |
+| ------------------------------------ | ----------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Administrator                        | a sudoer; owns the rootful Docker daemon                                | provisions agent users, runs the sidecar                        |
+| Agent users (`agent-01`, `agent-02`) | no sudo, no `docker` group, own rootless Docker daemon, private `700` home | run the AI agents; hold **no** credentials                      |
+| `gitsidecar` (uid 3000)              | system account, `nologin`                                               | owns the sidecar's credential volumes and the files it writes   |
+
+Why agents stay isolated from each other even though one container can reach them all:
+
+- **File writes.** The container is added to each agent's own primary group at run time
+  (`--group-add`), and each agent's `Projects` is `2770` setgid with a default ACL (set up
+  during provisioning). The sidecar and the owning agent can both read/write that agent's
+  repos — but no *other* agent is in that group, and every home is `700`.
+- **Requests.** All agents reach the same endpoint (`127.0.0.1:8900`), but every operation
+  requires the per-repo `.git-sidecar-token`, which lives inside that agent's `700` home.
+  An agent can't read another agent's token, so it can't drive the sidecar against another
+  agent's repo. (The sidecar verifies tokens with a timing-safe compare and resolves repo
+  paths relative to `/projects`, so `<agent>/<repo>` addressing works natively.)
+- **Credentials.** The sidecar runs on the rootful daemon, which the agents (rootless, not
+  in the `docker` group) cannot reach — an agent can't `docker exec` into the sidecar to
+  steal the shared credentials.
+
+> **Known gap — git's repo-level code execution.** The sidecar runs `git` inside
+> repos the agents can write to, and git executes repo-controlled code: hooks in
+> `.git/hooks/`, and commands configured in `.git/config` (`core.fsmonitor`,
+> filter/diff drivers). A malicious agent can plant these in its *own* repo and get
+> code execution as the sidecar uid — which is in every agent's group and can read
+> the shared credentials. Disabling hooks helps (see the `GIT_CONFIG_*` environment
+> entries in the start command, which override repo-local config) but does not close
+> the `.git/config`-driven vectors. Treat cross-agent isolation in this model as a
+> hardening layer against accidents and casual misuse, not a guarantee against a
+> determined malicious agent.
+
+Tradeoffs you're accepting:
+
+- All agents push under **one** GitHub identity.
+- A compromise of the sidecar process reaches every mounted `Projects` tree — and per
+  the known gap above, any served agent has a plausible path to exactly that
+  compromise. Size the blast radius accordingly.
+
+If either is unacceptable, run one sidecar per agent instead.
+
+## Host prerequisites
+
+- Docker Engine (rootful) for the sidecar, plus the rootless pieces for the agents:
+  `docker-ce-rootless-extras` (provides `dockerd-rootless-setuptool.sh` and
+  `rootlesskit`), `uidmap`, and `slirp4netns`.
+- The `acl` package (`setfacl`), for default ACLs on the agents' `Projects` directories.
+- A sudoer account — the administrator. Everything below runs from it unless marked
+  otherwise.
+
+## Part 1 — provision an agent user
+
+Each agent user gets:
+
+- **No `docker` group membership** — no root-equivalent access to the system daemon.
+- **Its own rootless `dockerd`** at `unix:///run/user/<uid>/docker.sock`, for running the
+  agent's own sandbox containers.
+- **A private home** (`chmod 700`, own primary group) — no other non-root user can read it.
+- **No passwordless sudo** — anything needing real root stays with the administrator.
+- **A "sidecar-ready" `Projects` directory** — setgid to the user's own group with a
+  default ACL, so the sidecar (joined to that group at run time) can collaborate on the
+  repos while other agents cannot.
+
+A deliberate non-choice: there is **no shared "agents" group**. A shared group is
+symmetric — every member reaches every other member's setgid files — which is exactly the
+cross-agent access this model avoids. Per-user groups give the sidecar an *asymmetric*
+reach: it joins every agent's group; no agent joins any other's.
+
+### Step by step
+
+Run the steps once per new user (`agent-01`, `agent-02`, …); `useradd` auto-allocates each
+user the next free subuid/subgid block, so ranges never collide.
+
+All steps run as the administrator. Set the target username once at the top of your shell
+session; step 1 captures its uid into `$UIDN`. Every block below assumes both are set:
+
+```bash
+export NEWUSER=agent-01            # the only thing you change per user
+```
+
+#### 1. Create the user with a private home + own group
+
+```bash
+sudo useradd --create-home --user-group --shell /bin/bash "$NEWUSER"
+export UIDN=$(id -u "$NEWUSER")              # capture the uid for the steps below
+sudo chmod 700 "/home/$NEWUSER"              # private; no group/other access
+sudo chown "$NEWUSER:$NEWUSER" "/home/$NEWUSER"
+```
+
+`--user-group` gives the user its own primary group (so it is *not* in any shared group).
+`useradd` also auto-allocates a subordinate uid/gid range — verify:
+
+```bash
+grep "^$NEWUSER:" /etc/subuid /etc/subgid    # expect <user>:<start>:65536
+```
+
+If for some reason it's missing, add the next free 65536 block explicitly:
+
+```bash
+start=$(awk -F: '{e=$2+$3; if(e>m)m=e} END{print (m<100000?100000:m)}' /etc/subuid)
+sudo usermod --add-subuids ${start}-$((start+65535)) "$NEWUSER"
+sudo usermod --add-subgids ${start}-$((start+65535)) "$NEWUSER"
+```
+
+#### 2. Prepare a "sidecar-ready" Projects directory
+
+The shared sidecar needs to read/write this user's repos while *other* agents cannot. Set
+the user's `Projects` dir setgid to its **own** group, with a default ACL so files stay
+group-writable regardless of umask:
+
+```bash
+sudo -u "$NEWUSER" mkdir -p "/home/$NEWUSER/Projects"
+sudo chown "$NEWUSER:$NEWUSER" "/home/$NEWUSER/Projects"
+sudo chmod 2770 "/home/$NEWUSER/Projects"          # setgid: files inherit the user's own group
+sudo setfacl -m   g::rwX "/home/$NEWUSER/Projects"  # group can write existing entries
+sudo setfacl -d -m g::rwX "/home/$NEWUSER/Projects" # ...and anything created later
+```
+
+At sidecar start time, the container is added to this group (`--group-add $(id -g
+"$NEWUSER")`) so it can collaborate on the repos. No other agent is in the user's group,
+and the `700` home blocks everyone else at the top — so this opens access to the sidecar
+*only*.
+
+#### 3. Enable linger (persistent user systemd manager + dockerd)
+
+```bash
+sudo loginctl enable-linger "$NEWUSER"
+# Wait for the user manager to come up. Use `sudo test`: /run/user/$UIDN is mode 700 owned
+# by the new user, so an unprivileged shell can't stat the bus socket and a bare
+# `[ -S ... ]` would loop forever even once it exists.
+while ! sudo test -S "/run/user/$UIDN/bus"; do sleep 0.5; done
+```
+
+#### 4. Install rootless docker *as the user*
+
+If `machinectl` is not installed, enter the user's systemd session via env vars. (A bare
+`sudo -iu "$NEWUSER"` will **not** work — it lacks `XDG_RUNTIME_DIR` and the dbus address.)
+
+```bash
+sudo -u "$NEWUSER" \
+  XDG_RUNTIME_DIR="/run/user/$UIDN" \
+  DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$UIDN/bus" \
+  PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+  dockerd-rootless-setuptool.sh install
+```
+
+No `--force` is needed: a brand-new user isn't in the `docker` group, so the rootful
+socket is already unreachable and the setuptool won't abort.
+
+#### 5. Persist `DOCKER_HOST` for the user
+
+```bash
+sudo -u "$NEWUSER" tee -a "/home/$NEWUSER/.bashrc" >/dev/null <<'EOF'
+
+# Rootless Docker
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export DOCKER_HOST="unix://${XDG_RUNTIME_DIR}/docker.sock"
+EOF
+
+sudo -u "$NEWUSER" mkdir -p "/home/$NEWUSER/.config/environment.d"
+sudo -u "$NEWUSER" tee "/home/$NEWUSER/.config/environment.d/10-docker.conf" >/dev/null <<EOF
+DOCKER_HOST=unix:///run/user/$UIDN/docker.sock
+EOF
+```
+
+#### 6. Verify
+
+```bash
+run() { sudo -u "$NEWUSER" XDG_RUNTIME_DIR="/run/user/$UIDN" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$UIDN/bus" "$@"; }
+
+id "$NEWUSER"                                # groups = own group only; no 'docker'
+run systemctl --user is-active docker        # active
+run env DOCKER_HOST="unix:///run/user/$UIDN/docker.sock" docker run --rm hello-world
+run env DOCKER_HOST=unix:///var/run/docker.sock docker ps   # -> permission denied (good)
+ls -ld "/home/$NEWUSER"                       # drwx------ <user> <user>
+```
+
+The proof of containment: a container's `root` maps to the host user's uid, bind-mounting
+host paths the user can't read (e.g. `/etc/shadow`) yields "Permission denied" inside the
+container, and the system `/var/run/docker.sock` is refused.
+
+### Operating as an agent user
+
+`useradd` leaves the account password-locked. To operate as the user, either:
+
+- `sudo -u "$NEWUSER" -i` for a quick shell (note: not a full systemd session — use the
+  env-var form from step 4 for `systemctl --user`/docker), or
+- set a password (`sudo passwd "$NEWUSER"`) / install an SSH key in `/home/$NEWUSER/.ssh`
+  for direct login.
+
+## Part 2 — run the shared sidecar
+
+### One-time setup
+
+```bash
+# 1. Dedicated service user that owns the single credential set (uid 3000, no login).
+sudo useradd --system --uid 3000 --user-group --shell /usr/sbin/nologin gitsidecar
+
+# 2. Build the image aligned to that uid (so the gh/ssh volumes are owned by 3000 and
+#    files written into /projects land with a sensible owner).
+sudo docker build \
+  --build-arg UID=3000 --build-arg GID=3000 \
+  -t git-sidecar:shared /path/to/git-sidecar
+
+# 3. Start it (see the single command below), then authenticate gh ONCE.
+#    Choose SSH as the protocol; it generates + uploads a dedicated key into the volumes.
+sudo docker exec -it git-sidecar gh auth login
+```
+
+uid 3000 is just an example — any free system uid works; pick one and use it
+consistently in the build args, `--user` flag, and re-owning recipes below.
+
+### Start it — the single command
+
+Edit the `AGENTS` list; that's the only thing that changes. Re-running this command
+restarts the sidecar with the current agent set (it removes and recreates the container),
+so it doubles as "add/remove an agent."
+
+```bash
+AGENTS=(agent-01 agent-02)   # users this sidecar serves (each provisioned via Part 1)
+
+# Build the per-agent flags into an array (one --group-add + -v pair per agent):
+args=()
+for u in "${AGENTS[@]}"; do
+  args+=( --group-add "$(id -g "$u")" -v "/home/$u/Projects:/projects/$u" )
+done
+
+sudo docker rm -f git-sidecar 2>/dev/null
+sudo docker run -d --name git-sidecar --restart unless-stopped \
+  -p 127.0.0.1:8900:8900 \
+  --user 3000:3000 \
+  "${args[@]}" \
+  -v "$HOME/.gitconfig:/home/sidecar/.gitconfig:ro" \
+  -v sidecar-ssh:/home/sidecar/.ssh \
+  -v gh-config:/home/sidecar/.config/gh \
+  -e ALLOWED_BRANCH_PREFIXES=task/,dependabot/ \
+  -e GIT_CONFIG_COUNT=1 \
+  -e GIT_CONFIG_KEY_0=core.hooksPath \
+  -e GIT_CONFIG_VALUE_0=/dev/null \
+  git-sidecar:shared
+```
+
+The loop puts one `--group-add <gid> -v /home/<u>/Projects:/projects/<u>` pair per agent
+into `args` — e.g. for `agent-01`: `--group-add 1004 -v /home/agent-01/Projects:/projects/agent-01`.
+
+The `GIT_CONFIG_*` entries disable git hooks for every git invocation the sidecar
+makes (environment config outranks a repo's own `.git/config`, so an agent can't
+re-enable them locally). This raises the bar described in the known-gap note above;
+it does not eliminate the other `.git/config` vectors.
+
+> **Build the array; don't inline a `$(for …)` substitution.** If a newline lands
+> mid-substitution when you paste an inlined one-liner, the shell splits the argument
+> list, runs the usernames as commands (`agent-01: command not found`), and launches the
+> container with empty `/home//Projects:/projects/` mounts. The array form above is
+> immune to that — every line is a complete statement.
+
+### Per-repo authorization (once per repo)
+
+Each repo an agent should reach needs a token file readable by that agent. As the agent
+user, drop it in the repo root with the bundled CLI (see the
+[README](../../README.md#authentication) for installing `git-sidecar-token`):
+
+```bash
+# as the agent user:
+git-sidecar-token ~/Projects/<repo>     # writes ~/Projects/<repo>/.git-sidecar-token
+```
+
+The agent then addresses that repo to the MCP server as `<agent>/<repo>` (e.g.
+`agent-01/my-repo`) and passes the token with each call.
+
+### Adding an agent later
+
+1. Provision the user (Part 1 — gives it a `700` home and a sidecar-ready `Projects`).
+2. Add its name to `AGENTS` and re-run the single start command above.
+
+No second `gh auth login` — the credential volumes are unchanged.
+
+## Part 3 — connect an agent's MCP client
+
+Any MCP client that speaks SSE works. With Claude Code, register the sidecar at user scope
+(available in every project), **as the agent user**:
+
+```bash
+claude mcp add --transport sse -s user git-sidecar http://127.0.0.1:8900/sse
+```
+
+The agent addresses repos as `<agent>/<repo>` (e.g. `agent-01/my-repo`), authenticating
+with the per-repo `.git-sidecar-token` from its own `Projects` tree.
+
+The README's containerized-client advice (a shared docker network) does **not** apply
+here: the sidecar lives on the rootful daemon and the agent's containers on the
+agent's rootless daemon, and a docker network cannot span two daemons. If the agent's
+MCP client runs as a host process under the agent's account (the common case), the
+loopback-published port just works. If the client must run inside one of the agent's
+rootless containers, it has to reach the host's loopback, which rootless Docker
+blocks by default — you'd need to enable slirp4netns host-loopback for that agent's
+daemon and point the client at the magic host address, accepting the slight widening
+of what the container can reach on the host.
+
+## Verify the deployment
+
+```bash
+sudo docker ps --filter name=git-sidecar           # Up, published on 127.0.0.1:8900
+sudo docker logs git-sidecar | tail                # serving on 0.0.0.0:8900
+curl -fsS http://127.0.0.1:8900/sse -m 1 || true   # endpoint reachable (SSE stream)
+
+# Ownership proof: a file the sidecar writes into an agent's repo is group-owned by that
+# agent and group-writable, so the agent can edit it; other agents are not in the group.
+sudo docker exec git-sidecar sh -c 'touch /projects/agent-01/.sidecar-probe; ls -l /projects/agent-01/.sidecar-probe'
+ls -l /home/agent-01/Projects/.sidecar-probe       # -rw-rw---- gitsidecar agent-01
+sudo rm /home/agent-01/Projects/.sidecar-probe
+```
+
+## Notes & caveats
+
+- **`gitconfig`:** the mounted `~/.gitconfig` is the administrator's; it sets the commit
+  identity for *all* agents. Point it at a bot identity if you don't want commits
+  attributed to your personal account.
+- **`--group-add $(id -g <user>)` assumes the user has its own primary group** (true for
+  users provisioned via Part 1). If an agent user's primary group is shared with other
+  accounts, the sidecar joins that shared group and the isolation argument above no
+  longer holds — give such users their own group first.
+- **The sidecar is on the rootful daemon**, which the agents (rootless, not in the
+  `docker` group) cannot reach — that's what stops an agent from `docker exec`-ing into
+  the sidecar to steal the shared credentials. Don't weaken this by adding agent users to
+  the `docker` group.
+- **Rootless Docker limits for the agent users** (intentional): no privileged ports
+  `<1024` by default, no `--net=host`, no `--privileged`, and image storage lives in
+  `~/.local/share/docker` (counts against the user's home/disk).
+
+### Troubleshooting: credential volumes owned by a different uid
+
+If a previous sidecar ran as a different uid, the existing `sidecar-ssh` / `gh-config`
+volumes are owned by that old uid and the new `gitsidecar` (3000) can't read them. The
+tell: inside the container, `.ssh` shows the old numeric owner. Re-own them once to keep
+the existing SSH key + gh login (no re-auth):
+
+```bash
+SUID=$(sudo docker exec git-sidecar id -u sidecar)   # 3000
+SGID=$(sudo docker exec git-sidecar id -g sidecar)
+sudo docker exec -u 0 git-sidecar sh -c "
+  chown -R $SUID:$SGID /home/sidecar/.ssh /home/sidecar/.config/gh
+  chmod 700 /home/sidecar/.ssh
+  find /home/sidecar/.ssh -type f -exec chmod 600 {} +
+  find /home/sidecar/.ssh -name '*.pub' -exec chmod 644 {} +
+"
+sudo docker restart git-sidecar
+sudo docker exec -u "$SUID" git-sidecar gh auth status   # confirm still logged in
+```
+
+To start clean instead: `sudo docker volume rm sidecar-ssh gh-config`, then run the
+`gh auth login` from the one-time setup.

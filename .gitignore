@@ -175,3 +175,6 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Local planning artifacts (Claude Code superpowers plans) — keep out of the repo
+docs/superpowers/plans/

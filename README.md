@@ -1,7 +1,7 @@
 # git-sidecar
 
 > [!WARNING]
-> **Work in progress — security is not guaranteed.** Effective isolation depends substantially on your individual host setup: Docker group membership, file ownership and umask, SSH key permissions, and which user accounts can `docker exec` into the running container all materially change what a compromised agent can reach. The design is meant to be hardenable (rootless Docker, dedicated unprivileged user, no Docker socket access for the agent), but that polish isn't here yet. Don't point this at credentials you can't afford to lose.
+> **Work in progress — security is not guaranteed.** Effective isolation depends substantially on your individual host setup: Docker group membership, file ownership and umask, SSH key permissions, and which user accounts can `docker exec` into the running container all materially change what a compromised agent can reach. The design is meant to be hardenable (rootless Docker, dedicated unprivileged user, no Docker socket access for the agent), but that polish isn't here yet. For one example of how those pieces can fit together, see [the deployment runbook](docs/runbooks/shared-sidecar-isolated-agents.md). Don't point this at credentials you can't afford to lose.
 
 A containerized MCP server that provides secure, credential-isolated Git and GitHub operations for AI agents running in sandboxed environments.
 
@@ -102,6 +102,12 @@ Adjust the projects directory to match your setup.
 - Force-push flags are rejected
 - Path traversal is blocked at multiple layers
 - Branch names must match configured prefixes
+
+## Deployment models
+
+The quick start above is the simplest setup: one sidecar on one user's Docker daemon, serving one agent. It is not the only way to run git-sidecar — how much isolation you get depends on how you deploy it.
+
+For one example of a hardened multi-agent setup — one shared sidecar on the administrator's rootful Docker daemon, serving several mutually-isolated agent users that each get a private home, their own rootless Docker daemon, and group-scoped file access — see [the deployment runbook](docs/runbooks/shared-sidecar-isolated-agents.md). Treat runbooks as worked examples, not prescriptions or guarantees.
 
 ## Development
 
