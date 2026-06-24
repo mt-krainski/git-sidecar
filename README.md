@@ -37,6 +37,12 @@ The MCP client connects to `http://127.0.0.1:8900/sse`.
 
 If the MCP client also runs in a container, replace `-p 127.0.0.1:8900:8900` with a shared bridge network (`docker network create git-sidecar-net` once, then `--network git-sidecar-net` on both containers).
 
+To register the sidecar with Claude, run:
+
+```bash
+claude mcp add --transport sse git-sidecar http://127.0.0.1:8900/sse
+```
+
 ### First-run setup
 
 Authenticate `gh` once — choose SSH as the protocol and let it generate and upload a dedicated SSH key for you. The key lands in `~/.ssh/` and gh credentials in `~/.config/gh/`, both held by named volumes so they survive restarts:
