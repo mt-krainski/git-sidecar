@@ -8,6 +8,7 @@ import pytest
 from git_sidecar.config import SidecarConfig
 from git_sidecar.executor import ExecResult
 from git_sidecar.tools import git_write
+from git_sidecar.tools.git_lfs import LFS_TIMEOUT
 from git_sidecar.validation import ValidationError
 
 PREFIXES = ["task/", "feat/"]
@@ -384,10 +385,11 @@ class TestGitPush:
     def test_push_valid_branch(self, mock_verify):
         """Pushes current branch to origin."""
         branch_result = make_run_result(0, "task/my-feature\n")
+        no_lfs_files = make_run_result(0, "")
         push_result = make_run_result(0, "pushed")
         with patch(
             "git_sidecar.tools.git_write.executor.run",
-            side_effect=[branch_result, push_result],
+            side_effect=[branch_result, no_lfs_files, push_result],
         ) as mock_run:
             result = git_write.git_push("my-org/my-repo", "token")
 
@@ -428,10 +430,11 @@ class TestGitPush:
     def test_push_no_force_flags(self, mock_verify):
         """git_push never passes force flags to executor."""
         branch_result = make_run_result(0, "task/safe\n")
+        no_lfs_files = make_run_result(0, "")
         push_result = make_run_result(0, "pushed")
         with patch(
             "git_sidecar.tools.git_write.executor.run",
-            side_effect=[branch_result, push_result],
+            side_effect=[branch_result, no_lfs_files, push_result],
         ) as mock_run:
             git_write.git_push("my-org/my-repo", "token")
 
@@ -451,3 +454,53 @@ class TestGitPush:
             result = git_write.git_push("my-org/my-repo", "token")
 
         assert result["ok"] is False
+
+    def test_push_uploads_lfs_objects_first(self, mock_verify):
+        """Pushes LFS objects before refs when the checkout tracks LFS files."""
+        branch_result = make_run_result(0, "task/my-feature\n")
+        lfs_files = make_run_result(0, "assets/model.bin\n")
+        lfs_push = make_run_result(0, "")
+        push_result = make_run_result(0, "pushed")
+        with patch(
+            "git_sidecar.tools.git_write.executor.run",
+            side_effect=[branch_result, lfs_files, lfs_push, push_result],
+        ) as mock_run:
+            result = git_write.git_push("my-org/my-repo", "token")
+
+        assert result["ok"] is True
+        lfs_call = mock_run.call_args_list[2]
+        assert lfs_call.args[0] == ["git", "lfs", "push", "origin", "task/my-feature"]
+        assert lfs_call.kwargs["timeout"] == LFS_TIMEOUT
+        push_call = mock_run.call_args_list[3]
+        assert push_call.args[0] == ["git", "push", "-u", "origin", "task/my-feature"]
+
+    def test_push_aborts_if_lfs_push_fails(self, mock_verify):
+        """Does not push refs when LFS object upload fails."""
+        branch_result = make_run_result(0, "task/my-feature\n")
+        lfs_files = make_run_result(0, "assets/model.bin\n")
+        lfs_push_fail = make_run_result(2, "", "upload failed")
+        with patch(
+            "git_sidecar.tools.git_write.executor.run",
+            side_effect=[branch_result, lfs_files, lfs_push_fail],
+        ) as mock_run:
+            result = git_write.git_push("my-org/my-repo", "token")
+
+        assert result["ok"] is False
+        assert "upload failed" in result["stderr"]
+        for call in mock_run.call_args_list:
+            assert call.args[0][:2] != ["git", "push"]
+
+    def test_push_skips_lfs_when_detection_fails(self, mock_verify):
+        """Pushes refs normally when git-lfs is unavailable or errors."""
+        branch_result = make_run_result(0, "task/my-feature\n")
+        lfs_check_fail = make_run_result(1, "", "'lfs' is not a git command")
+        push_result = make_run_result(0, "pushed")
+        with patch(
+            "git_sidecar.tools.git_write.executor.run",
+            side_effect=[branch_result, lfs_check_fail, push_result],
+        ) as mock_run:
+            result = git_write.git_push("my-org/my-repo", "token")
+
+        assert result["ok"] is True
+        push_call = mock_run.call_args_list[-1]
+        assert push_call.args[0] == ["git", "push", "-u", "origin", "task/my-feature"]

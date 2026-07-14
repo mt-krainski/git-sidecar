@@ -1,14 +1,17 @@
 FROM python:3.12-slim
 
-# Install git and gh CLI
+# Install git, git-lfs, and gh CLI. `git lfs install --system` registers
+# the LFS smudge/clean filters in /etc/gitconfig so checkouts and adds in
+# LFS repos work for every user without per-repo setup.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends git openssh-client curl && \
+    apt-get install -y --no-install-recommends git git-lfs openssh-client curl && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         -o /usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
         > /etc/apt/sources.list.d/github-cli.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends gh && \
+    git lfs install --system --skip-repo && \
     rm -rf /var/lib/apt/lists/*
 
 # Pre-trust github.com host keys so ssh doesn't prompt or fail on first use.

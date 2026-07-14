@@ -2,6 +2,7 @@
 
 from git_sidecar import auth, executor
 from git_sidecar.config import SidecarConfig
+from git_sidecar.tools.git_lfs import LFS_TIMEOUT
 from git_sidecar.validation import (
     ValidationError,
     validate_checkout_target,
@@ -214,6 +215,16 @@ def git_push(repo: str, token: str) -> dict:
 
     # Validate branch is safe to push
     validate_push_branch(branch, config.allowed_branch_prefixes)
+
+    # git push uploads LFS objects only via repo-local hooks, which may be
+    # absent — push them explicitly first when the checkout tracks any.
+    lfs_files = executor.run(["git", "lfs", "ls-files", "--name-only"], cwd=cwd)
+    if lfs_files.ok and lfs_files.stdout.strip():
+        lfs_result = executor.run(
+            ["git", "lfs", "push", "origin", branch], cwd=cwd, timeout=LFS_TIMEOUT
+        )
+        if not lfs_result.ok:
+            return lfs_result.to_dict()
 
     result = executor.run(["git", "push", "-u", "origin", branch], cwd=cwd)
     return result.to_dict()

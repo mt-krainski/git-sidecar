@@ -3,7 +3,7 @@
 from mcp.server.fastmcp import FastMCP
 
 from git_sidecar.config import SidecarConfig
-from git_sidecar.tools import git_read, git_write, github
+from git_sidecar.tools import git_lfs, git_read, git_write, github
 
 mcp: FastMCP | None = None
 
@@ -34,6 +34,15 @@ _WRITE_TOOLS = [
     "git_worktree",
     "git_checkout",
     "git_push",
+]
+
+_LFS_TOOLS = [
+    "git_lfs_track",
+    "git_lfs_untrack",
+    "git_lfs_ls_files",
+    "git_lfs_status",
+    "git_lfs_fetch",
+    "git_lfs_pull",
 ]
 
 _GITHUB_TOOLS = [
@@ -74,10 +83,12 @@ def create_server(config: SidecarConfig | None = None) -> FastMCP:
 
     git_read.init(config)
     git_write.init(config)
+    git_lfs.init(config)
     github.init(config)
 
     _register_tools(git_read, _READ_TOOLS)
     _register_tools(git_write, _WRITE_TOOLS)
+    _register_tools(git_lfs, _LFS_TOOLS)
     _register_tools(github, _GITHUB_TOOLS)
 
     return mcp

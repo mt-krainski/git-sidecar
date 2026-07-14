@@ -68,13 +68,19 @@ The agent provides this token with every tool call. The sidecar verifies it usin
 
 ## MCP tools
 
-32 tools across three categories:
+38 tools across four categories:
 
 **Git read** (12): `git_status`, `git_diff`, `git_log`, `git_show`, `git_branch`, `git_rev_parse`, `git_ls_files`, `git_stash_list`, `git_remote`, `git_blame`, `git_tag`, `git_config_get`
 
 **Git write** (11): `git_add`, `git_rm`, `git_commit`, `git_restore`, `git_stash`, `git_fetch`, `git_pull`, `git_merge`, `git_worktree`, `git_checkout`, `git_push`
 
+**Git LFS** (6): `git_lfs_track`, `git_lfs_untrack`, `git_lfs_ls_files`, `git_lfs_status`, `git_lfs_fetch`, `git_lfs_pull`
+
 **GitHub** (9): `gh_pr_create`, `gh_pr_view`, `gh_pr_list`, `gh_pr_fetch`, `gh_pr_reply`, `gh_pr_checks`, `gh_pr_close`, `gh_run_view`, `gh_run_list`
+
+### Git LFS
+
+The image bundles `git-lfs` with its smudge/clean filters registered system-wide, so checkouts and pulls in LFS repositories resolve pointer files automatically. `git_push` uploads LFS objects for the current branch before pushing refs — this works even in repositories that lack the repo-local LFS pre-push hook (e.g. cloned before LFS was installed), and refs are never pushed if the object upload fails. LFS transfers get a 10-minute timeout instead of the 60-second default.
 
 ## Configuration
 
