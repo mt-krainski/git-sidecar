@@ -47,6 +47,7 @@ _LFS_TOOLS = [
 
 _GITHUB_TOOLS = [
     "gh_pr_create",
+    "gh_pr_edit",
     "gh_pr_view",
     "gh_pr_list",
     "gh_pr_fetch",
