@@ -212,6 +212,121 @@ class TestGhPrCreate:
 
 
 # ---------------------------------------------------------------------------
+# gh_pr_edit
+# ---------------------------------------------------------------------------
+
+
+class TestGhPrEdit:
+    """Tests for gh_pr_edit."""
+
+    def test_title_only(self, initialized, repo_path):
+        """Edit title only — command carries --title, not --body/--base."""
+        with (
+            patch("git_sidecar.tools.github.verify_token") as mock_vt,
+            patch("git_sidecar.tools.github.executor.run") as mock_run,
+        ):
+            mock_vt.return_value = repo_path
+            mock_run.side_effect = [
+                _ok(SSH_URL),
+                _ok("https://github.com/acme/srv/pull/42\n"),
+            ]
+            result = github.gh_pr_edit("r", "t", 42, title="New Title")
+
+        assert result == {"pr": 42, "repo": REPO_SPEC, "edited": True}
+        cmd = mock_run.call_args_list[1][0][0]
+        assert "--title" in cmd
+        assert "New Title" in cmd
+        assert "--body" not in cmd
+        assert "--base" not in cmd
+
+    def test_body_only(self, initialized, repo_path):
+        """Edit body only — command carries --body, not --title/--base."""
+        with (
+            patch("git_sidecar.tools.github.verify_token") as mock_vt,
+            patch("git_sidecar.tools.github.executor.run") as mock_run,
+        ):
+            mock_vt.return_value = repo_path
+            mock_run.side_effect = [_ok(SSH_URL), _ok("")]
+            result = github.gh_pr_edit("r", "t", 42, body="New body")
+
+        assert result == {"pr": 42, "repo": REPO_SPEC, "edited": True}
+        cmd = mock_run.call_args_list[1][0][0]
+        assert "--body" in cmd
+        assert "New body" in cmd
+        assert "--title" not in cmd
+        assert "--base" not in cmd
+
+    def test_base_only(self, initialized, repo_path):
+        """Edit base branch only — arbitrary base accepted, no prefix rule."""
+        with (
+            patch("git_sidecar.tools.github.verify_token") as mock_vt,
+            patch("git_sidecar.tools.github.executor.run") as mock_run,
+        ):
+            mock_vt.return_value = repo_path
+            mock_run.side_effect = [_ok(SSH_URL), _ok("")]
+            result = github.gh_pr_edit("r", "t", 42, base="develop")
+
+        assert result == {"pr": 42, "repo": REPO_SPEC, "edited": True}
+        cmd = mock_run.call_args_list[1][0][0]
+        assert "--base" in cmd
+        assert "develop" in cmd
+        assert "--title" not in cmd
+        assert "--body" not in cmd
+
+    def test_all_fields_builds_exact_command(self, initialized, repo_path):
+        """Title, body, and base together — full command, base may be main."""
+        with (
+            patch("git_sidecar.tools.github.verify_token") as mock_vt,
+            patch("git_sidecar.tools.github.executor.run") as mock_run,
+        ):
+            mock_vt.return_value = repo_path
+            mock_run.side_effect = [_ok(SSH_URL), _ok("")]
+            result = github.gh_pr_edit("r", "t", 7, title="T", body="B", base="main")
+
+        assert result == {"pr": 7, "repo": REPO_SPEC, "edited": True}
+        cmd = mock_run.call_args_list[1][0][0]
+        assert cmd == [
+            "gh",
+            "pr",
+            "edit",
+            "7",
+            "--repo",
+            REPO_SPEC,
+            "--title",
+            "T",
+            "--body",
+            "B",
+            "--base",
+            "main",
+        ]
+
+    def test_no_fields_returns_guard_error(self, initialized, repo_path):
+        """No field supplied — guard error, and no subprocess is run."""
+        with (
+            patch("git_sidecar.tools.github.verify_token") as mock_vt,
+            patch("git_sidecar.tools.github.executor.run") as mock_run,
+        ):
+            mock_vt.return_value = repo_path
+            result = github.gh_pr_edit("r", "t", 42)
+
+        assert result["ok"] is False
+        assert "at least one" in result["error"]
+        assert mock_run.call_count == 0
+
+    def test_gh_failure_returns_exec_dict(self, initialized, repo_path):
+        """Return the ExecResult dict when gh command fails."""
+        with (
+            patch("git_sidecar.tools.github.verify_token") as mock_vt,
+            patch("git_sidecar.tools.github.executor.run") as mock_run,
+        ):
+            mock_vt.return_value = repo_path
+            mock_run.side_effect = [_ok(SSH_URL), _fail("gh: error")]
+            result = github.gh_pr_edit("r", "t", 42, title="T")
+
+        assert result["ok"] is False
+
+
+# ---------------------------------------------------------------------------
 # gh_pr_view
 # ---------------------------------------------------------------------------
 

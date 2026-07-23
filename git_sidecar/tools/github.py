@@ -103,6 +103,57 @@ def gh_pr_create(repo: str, token: str, base: str, title: str, body: str) -> dic
     return result.to_dict()
 
 
+def gh_pr_edit(
+    repo: str,
+    token: str,
+    pr_number: int,
+    title: str | None = None,
+    body: str | None = None,
+    base: str | None = None,
+) -> dict:
+    """Edit a pull request's title, body, and/or base branch.
+
+    Only the fields provided are changed; omitted fields are left unchanged.
+    At least one of title, body, or base must be provided.
+
+    Args:
+        repo: Relative path to the repository.
+        token: Agent authentication token.
+        pr_number: PR number to edit.
+        title: New PR title (optional).
+        body: New PR body text (optional).
+        base: New base branch to retarget the PR onto (optional).
+
+    Returns:
+        Dict confirming the edit on success, or an error dict when no field is
+        provided or the gh command fails.
+    """
+    config = _get_config()
+    repo_path = verify_token(config, repo, token)
+
+    if title is None and body is None and base is None:
+        return {
+            "ok": False,
+            "error": "gh_pr_edit requires at least one of: title, body, base",
+        }
+
+    owner, repo_name = _get_github_repo(str(repo_path))
+    repo_spec = f"{owner}/{repo_name}"
+
+    cmd = ["gh", "pr", "edit", str(pr_number), "--repo", repo_spec]
+    if title is not None:
+        cmd.extend(["--title", title])
+    if body is not None:
+        cmd.extend(["--body", body])
+    if base is not None:
+        cmd.extend(["--base", base])
+
+    result = executor.run(cmd, cwd=str(repo_path))
+    if not result.ok:
+        return result.to_dict()
+    return {"pr": pr_number, "repo": repo_spec, "edited": True}
+
+
 def gh_pr_view(
     repo: str,
     token: str,

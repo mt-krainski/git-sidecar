@@ -68,7 +68,7 @@ The agent provides this token with every tool call. The sidecar verifies it usin
 
 ## MCP tools
 
-38 tools across four categories:
+39 tools across four categories:
 
 **Git read** (12): `git_status`, `git_diff`, `git_log`, `git_show`, `git_branch`, `git_rev_parse`, `git_ls_files`, `git_stash_list`, `git_remote`, `git_blame`, `git_tag`, `git_config_get`
 
@@ -76,7 +76,7 @@ The agent provides this token with every tool call. The sidecar verifies it usin
 
 **Git LFS** (6): `git_lfs_track`, `git_lfs_untrack`, `git_lfs_ls_files`, `git_lfs_status`, `git_lfs_fetch`, `git_lfs_pull`
 
-**GitHub** (9): `gh_pr_create`, `gh_pr_view`, `gh_pr_list`, `gh_pr_fetch`, `gh_pr_reply`, `gh_pr_checks`, `gh_pr_close`, `gh_run_view`, `gh_run_list`
+**GitHub** (10): `gh_pr_create`, `gh_pr_edit`, `gh_pr_view`, `gh_pr_list`, `gh_pr_fetch`, `gh_pr_reply`, `gh_pr_checks`, `gh_pr_close`, `gh_run_view`, `gh_run_list`
 
 ### Git LFS
 
