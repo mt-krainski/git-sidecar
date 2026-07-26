@@ -521,13 +521,41 @@ class TestGitWorktreeAddProvisioning:
         assert result.ok, result.stderr
         assert gitdir.stdout.strip().startswith(str(elsewhere))
 
-    def test_reverse_pointer_is_left_as_git_wrote_it(self, main_repo, added_worktree):
-        """The admin dir's gitdir file keeps git's absolute path to the worktree."""
+    def test_reverse_pointer_is_left_absolute(self, main_repo, added_worktree):
+        """The admin dir's gitdir file keeps git's absolute path to the worktree.
+
+        Not an arbitrary choice: git below 2.48 resolves a relative reverse
+        pointer against the current working directory, not the admin dir.
+        """
         reverse = main_repo / ".git" / "worktrees" / WORKTREE_NAME / "gitdir"
         recorded = reverse.read_text().strip()
 
         assert os.path.isabs(recorded)
         assert pathlib.Path(recorded).resolve() == (added_worktree / ".git").resolve()
+
+    def test_worktree_is_not_prunable_after_add(self, main_repo, added_worktree):
+        """The main clone's bookkeeping survives provisioning.
+
+        Making the reverse pointer relative breaks this on git < 2.48: the
+        worktree reads as prunable and `git worktree prune` proposes deleting
+        its admin metadata out from under whoever is working in it.
+        """
+        listed = executor.run(
+            ["git", "worktree", "list", "--porcelain"], cwd=str(main_repo)
+        )
+        pruned = executor.run(
+            ["git", "worktree", "prune", "-n", "-v"], cwd=str(main_repo)
+        )
+
+        # "prunable" is a porcelain annotation line, not a substring match —
+        # pytest's tmp_path is named after this test and contains the word.
+        annotations = [
+            line for line in listed.stdout.splitlines() if line.startswith("prunable")
+        ]
+
+        assert str(added_worktree) in listed.stdout
+        assert annotations == []
+        assert pruned.stdout.strip() == ""
 
     def test_token_file_is_copied(self, main_repo, added_worktree, worktree_config):
         """The gitignored token file travels, under the configured filename."""

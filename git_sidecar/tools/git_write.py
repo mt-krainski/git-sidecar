@@ -174,9 +174,21 @@ def _rewrite_gitdir_pointer(worktree_path: pathlib.Path) -> None:
     mount and the agent sees the same tree under its own home. A relative
     pointer resolves for both, since both see the same directory structure.
 
-    The reverse pointer (`<main>/.git/worktrees/<name>/gitdir`) is deliberately
-    left as git wrote it: git does not read it from inside the worktree, and
-    both users work with that combination.
+    Only this forward pointer is rewritten. The reverse pointer
+    (`<main>/.git/worktrees/<name>/gitdir`) is left absolute because git 2.34.1
+    cannot read a relative one: it resolves the recorded path against the
+    current working directory rather than against the admin directory, so the
+    worktree reads as prunable from some directories and not others. Git 2.48
+    writes both pointers relative under `worktree.useRelativePaths`; below that
+    floor there is no relative form that works.
+
+    That leaves a residual hazard this function cannot fix: the reverse pointer
+    is only valid in the namespace that created the worktree, so `git worktree
+    list` in the *other* namespace reports the worktree as prunable and `git
+    worktree prune` there would delete its admin metadata. In-worktree commands
+    (status, ls-files, commit) are unaffected — git does not read the reverse
+    pointer from inside a worktree. Closing it needs the two users to see the
+    tree at the same absolute path, or git >= 2.48.
 
     Args:
         worktree_path: Directory of the newly created worktree.
