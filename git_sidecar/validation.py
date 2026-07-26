@@ -1,5 +1,7 @@
 """Input validation for branch names, paths, and arguments."""
 
+import pathlib
+
 
 class ValidationError(Exception):
     """Raised when input validation fails."""
@@ -117,3 +119,54 @@ def validate_file_args(files: list[str]) -> None:
     for f in files:
         if ".." in f.split("/"):
             raise ValidationError(f"Path traversal not allowed: {f}")
+
+
+def resolve_output_path(base: pathlib.Path, output: str) -> pathlib.Path:
+    """Resolve a path a tool will write to and confine it to one directory.
+
+    Confinement is decided on the resolved path, component-wise: symlinks are
+    followed first, so neither '..', an absolute path, nor a symlink — at any
+    component, base itself included — can name a path outside base. A
+    string-prefix comparison would be weaker: it admits a sibling whose name
+    merely starts with base's, such as "packages-backup" beside "packages".
+
+    This answers what a path names now, which is all a check can answer. It is
+    not a licence to write: anything can change between this call and the open,
+    so the write must defend itself (see git_read._write_output).
+
+    Args:
+        base: Absolute, already-resolved directory the output must stay inside.
+            It need not exist yet.
+        output: Path relative to base, naming a file below it.
+
+    Returns:
+        Resolved absolute path inside base.
+
+    Raises:
+        ValidationError: If output is empty, holds a null byte, is absolute,
+            cannot be resolved, escapes base, or names base itself.
+    """
+    if not output:
+        raise ValidationError("Output path cannot be empty")
+
+    if "\0" in output:
+        raise ValidationError(f"Output path contains a null byte: {output!r}")
+
+    if pathlib.Path(output).is_absolute():
+        raise ValidationError(f"Output path must be relative to {base.name}/: {output}")
+
+    try:
+        resolved = (base / output).resolve()
+    except (OSError, RuntimeError, ValueError) as exc:
+        message = f"Output path cannot be resolved: {output} ({exc})"
+        raise ValidationError(message) from exc
+
+    if not resolved.is_relative_to(base):
+        raise ValidationError(f"Output path escapes {base.name}/: {output}")
+
+    if resolved == base:
+        raise ValidationError(
+            f"Output path must name a file inside {base.name}/: {output}"
+        )
+
+    return resolved
