@@ -84,8 +84,6 @@ The agent provides this token with every tool call. The sidecar verifies it usin
 
 `output` is relative to `<repo>/.git-sidecar/` and confined to it. The directory is created on first use with a `.gitignore` of `*`, so it ignores everything it holds, itself included, and no repository needs an ignore entry of its own; an existing directory is left as found.
 
-Confinement is enforced when the file is opened rather than by inspecting the path: each component below the directory is opened with `O_NOFOLLOW` relative to the one above, and the target must be a regular file with no other hard links. A symlink or a hardlink planted at the target is refused, not followed.
-
 ### Git LFS
 
 The image bundles `git-lfs` with its smudge/clean filters registered system-wide, so checkouts and pulls in LFS repositories resolve pointer files automatically. `git_push` uploads LFS objects for the current branch before pushing refs — this works even in repositories that lack the repo-local LFS pre-push hook (e.g. cloned before LFS was installed), and refs are never pushed if the object upload fails. LFS transfers get a 10-minute timeout instead of the 60-second default.

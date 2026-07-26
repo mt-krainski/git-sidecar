@@ -234,11 +234,7 @@ def git_diff(
     changes underneath the two calls can make them disagree.
 
     `output` is a path relative to `<repo>/.git-sidecar/` and must stay inside
-    it; '..', an absolute path, and a symlink leading out are all rejected.
-    Confinement is enforced when the file is opened, not by inspecting the
-    path: each component below the directory is opened with O_NOFOLLOW relative
-    to the one above, and the target must be a regular file with no other hard
-    links, so a link planted at either is refused rather than followed.
+    it; anything that would land outside is rejected.
 
     Missing directories are created — the sidecar directory itself on first
     use, holding a .gitignore of '*' that ignores everything there including
