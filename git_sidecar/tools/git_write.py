@@ -1,6 +1,5 @@
 """Git write tools for the git-sidecar MCP server."""
 
-import os
 import pathlib
 import shutil
 
@@ -19,7 +18,6 @@ _config: SidecarConfig | None = None
 ALLOWED_STASH_ACTIONS = frozenset({"push", "pop", "apply", "drop", "show"})
 ALLOWED_WORKTREE_ACTIONS = frozenset({"add", "list", "remove"})
 
-GITDIR_PREFIX = "gitdir: "
 WORKTREE_TOKEN_MODE = 0o660
 
 
@@ -166,48 +164,6 @@ def git_merge(repo: str, token: str, branch: str) -> dict:
     return result.to_dict()
 
 
-def _rewrite_gitdir_pointer(worktree_path: pathlib.Path) -> None:
-    """Rewrite a new worktree's .git pointer as a path relative to the worktree.
-
-    `git worktree add` records an absolute gitdir, which only resolves in the
-    namespace that created it — the sidecar sees the tree under its projects
-    mount and the agent sees the same tree under its own home. A relative
-    pointer resolves for both, since both see the same directory structure.
-
-    Only this forward pointer is rewritten. The reverse pointer
-    (`<main>/.git/worktrees/<name>/gitdir`) is left absolute because git 2.34.1
-    cannot read a relative one: it resolves the recorded path against the
-    current working directory rather than against the admin directory, so the
-    worktree reads as prunable from some directories and not others. Git 2.48
-    writes both pointers relative under `worktree.useRelativePaths`; below that
-    floor there is no relative form that works.
-
-    That leaves a residual hazard this function cannot fix: the reverse pointer
-    is only valid in the namespace that created the worktree, so `git worktree
-    list` in the *other* namespace reports the worktree as prunable and `git
-    worktree prune` there would delete its admin metadata. In-worktree commands
-    (status, ls-files, commit) are unaffected — git does not read the reverse
-    pointer from inside a worktree. Closing it needs the two users to see the
-    tree at the same absolute path, or git >= 2.48.
-
-    Args:
-        worktree_path: Directory of the newly created worktree.
-
-    Raises:
-        OSError: If the pointer file cannot be read or written.
-        ValueError: If the pointer file is not a gitdir pointer.
-    """
-    pointer_file = worktree_path / ".git"
-    pointer = pointer_file.read_text().strip()
-
-    if not pointer.startswith(GITDIR_PREFIX):
-        raise ValueError(f"{pointer_file} is not a gitdir pointer")
-
-    gitdir = pointer.removeprefix(GITDIR_PREFIX).strip()
-    relative_gitdir = os.path.relpath(gitdir, worktree_path)
-    pointer_file.write_text(f"{GITDIR_PREFIX}{relative_gitdir}\n")
-
-
 def _copy_token_file(
     config: SidecarConfig, repo_path: pathlib.Path, worktree_path: pathlib.Path
 ) -> None:
@@ -239,9 +195,14 @@ def git_worktree(
 ) -> dict:
     """Manage worktrees. action: add, list, remove.
 
-    A new worktree is provisioned for shared use: its gitdir pointer is made
-    relative so it resolves for the sidecar and the agent alike, and the
-    repository's token file is copied in.
+    A new worktree gets a copy of the repository's token file, which is
+    gitignored and so never travels with `git worktree add`.
+
+    An added worktree is usable only where the tree is mounted at the same
+    absolute path for every user of the repository: git records absolute paths
+    in both of a worktree's pointer files, so a user who sees the tree under a
+    different prefix gets "not a git repository", and the main clone reports
+    the worktree as prunable.
     """
     if action not in ALLOWED_WORKTREE_ACTIONS:
         allowed = ", ".join(sorted(ALLOWED_WORKTREE_ACTIONS))
@@ -264,16 +225,15 @@ def git_worktree(
     if action == "add" and path is not None and result.ok:
         worktree_path = repo_path / path
         try:
-            _rewrite_gitdir_pointer(worktree_path)
             _copy_token_file(config, repo_path, worktree_path)
-        except (OSError, ValueError) as exc:
+        except OSError as exc:
             return {
                 "ok": False,
                 "returncode": 1,
                 "stdout": result.stdout,
                 "stderr": (
-                    f"worktree added at {worktree_path} but could not be "
-                    f"provisioned for shared use: {exc}"
+                    f"worktree added at {worktree_path} but its token file "
+                    f"could not be provisioned: {exc}"
                 ),
             }
 

@@ -1,6 +1,5 @@
 """Tests for git_sidecar.tools.git_write."""
 
-import os
 import pathlib
 import shutil
 import stat
@@ -309,11 +308,6 @@ GIT_IDENTITY = {
 }
 
 
-def pointer_target(worktree: pathlib.Path) -> str:
-    """Return the path recorded in a worktree's .git pointer file."""
-    return (worktree / ".git").read_text().strip().removeprefix("gitdir: ")
-
-
 def init_git_repo(repo: pathlib.Path) -> None:
     """Initialize a real git repository with a single commit."""
     executor.run(["git", "init", "-q", "-b", "main", "."], cwd=str(repo))
@@ -336,7 +330,7 @@ def worktree_config(tmp_path):
 def fake_repo(worktree_config, tmp_path):
     """Repo directory with a token file, pointed at by git_write (no real git)."""
     repo = tmp_path / "my-org" / "my-repo"
-    (repo / ".git" / "worktrees" / WORKTREE_NAME).mkdir(parents=True)
+    repo.mkdir(parents=True)
     (repo / worktree_config.token_filename).write_text(WORKTREE_TOKEN + "\n")
     git_write.init(worktree_config)
     return repo
@@ -344,11 +338,9 @@ def fake_repo(worktree_config, tmp_path):
 
 @pytest.fixture()
 def fake_worktree(fake_repo, tmp_path):
-    """Directory shaped like the worktree git would just have written."""
+    """Directory git would just have created for a new worktree."""
     worktree = tmp_path / "my-org" / WORKTREE_NAME
     worktree.mkdir()
-    admin_dir = fake_repo / ".git" / "worktrees" / WORKTREE_NAME
-    (worktree / ".git").write_text(f"gitdir: {admin_dir}\n")
     return worktree
 
 
@@ -426,25 +418,27 @@ class TestGitWorktree:
         with pytest.raises(ValidationError, match="Invalid worktree action"):
             git_write.git_worktree("my-org/my-repo", "token", action="prune")
 
-    def test_list_does_not_provision(self, fake_worktree, worktree_config, mock_run):
-        """List action leaves the worktree's pointer and token alone."""
+    def test_list_does_not_copy_the_token(
+        self, fake_worktree, worktree_config, mock_run
+    ):
+        """List action provisions nothing."""
         result = git_write.git_worktree(WORKTREE_REPO, WORKTREE_TOKEN, action="list")
 
         assert result["ok"] is True
-        assert os.path.isabs(pointer_target(fake_worktree))
         assert not (fake_worktree / worktree_config.token_filename).exists()
 
-    def test_remove_does_not_provision(self, fake_worktree, worktree_config, mock_run):
-        """Remove action leaves the worktree's pointer and token alone."""
+    def test_remove_does_not_copy_the_token(
+        self, fake_worktree, worktree_config, mock_run
+    ):
+        """Remove action provisions nothing."""
         result = git_write.git_worktree(
             WORKTREE_REPO, WORKTREE_TOKEN, action="remove", path=str(fake_worktree)
         )
 
         assert result["ok"] is True
-        assert os.path.isabs(pointer_target(fake_worktree))
         assert not (fake_worktree / worktree_config.token_filename).exists()
 
-    def test_failed_add_does_not_provision(self, fake_worktree, worktree_config):
+    def test_failed_add_does_not_copy_the_token(self, fake_worktree, worktree_config):
         """A failed git worktree add is returned as-is, with nothing provisioned."""
         with patch(
             "git_sidecar.tools.git_write.executor.run", return_value=FAIL_RESULT
@@ -455,7 +449,6 @@ class TestGitWorktree:
 
         assert result["ok"] is False
         assert result["stderr"] == "error"
-        assert os.path.isabs(pointer_target(fake_worktree))
         assert not (fake_worktree / worktree_config.token_filename).exists()
 
     def test_add_reports_provisioning_failure(self, fake_repo, tmp_path, mock_run):
@@ -471,32 +464,9 @@ class TestGitWorktree:
         assert "provision" in result["stderr"]
         assert WORKTREE_TOKEN not in result["stderr"]
 
-    def test_add_reports_unexpected_pointer(self, fake_worktree, mock_run):
-        """A .git file that is not a gitdir pointer is reported, not rewritten."""
-        (fake_worktree / ".git").write_text("not a pointer\n")
-
-        result = git_write.git_worktree(
-            WORKTREE_REPO, WORKTREE_TOKEN, action="add", path=str(fake_worktree)
-        )
-
-        assert result["ok"] is False
-        assert "gitdir pointer" in result["stderr"]
-        assert (fake_worktree / ".git").read_text() == "not a pointer\n"
-
 
 class TestGitWorktreeAddProvisioning:
-    """Tests for the repairs that make a new worktree usable by both users."""
-
-    def test_forward_pointer_is_rewritten_relative(self, main_repo, added_worktree):
-        """The worktree's own .git names the admin dir by relative path."""
-        pointer = (added_worktree / ".git").read_text().strip()
-        target = pointer_target(added_worktree)
-
-        assert pointer.startswith("gitdir: ")
-        assert not os.path.isabs(target)
-        assert (added_worktree / target).resolve() == (
-            main_repo / ".git" / "worktrees" / WORKTREE_NAME
-        ).resolve()
+    """Tests for the token file a new worktree needs but never inherits."""
 
     def test_worktree_is_usable_by_git(self, added_worktree):
         """Git runs inside the new worktree — e.g. a suite shelling out to git."""
@@ -505,40 +475,35 @@ class TestGitWorktreeAddProvisioning:
         assert result.ok, result.stderr
         assert "README.md" in result.stdout
 
-    def test_worktree_is_usable_under_another_absolute_prefix(
+    def test_worktree_requires_one_absolute_path_for_every_user(
         self, added_worktree, tmp_path
     ):
-        """The relative pointer resolves for a user who sees the tree elsewhere."""
+        """Pins the deployment requirement: one tree, one absolute path.
+
+        `git worktree add` records absolute paths in both of a worktree's
+        pointer files, so a worktree is usable only under the prefix it was
+        created with. The sidecar and the agent must therefore see the
+        repository at the same absolute path; a container that mounts it
+        elsewhere breaks every worktree it creates for the other user, and no
+        post-processing in this module can compensate for that.
+        """
         elsewhere = tmp_path / "elsewhere"
-        shutil.copytree(tmp_path / "my-org", elsewhere / "my-org", symlinks=True)
+        elsewhere.mkdir()
+        shutil.move(tmp_path / "my-org", elsewhere / "my-org")
         moved = elsewhere / "my-org" / WORKTREE_NAME
 
         result = executor.run(["git", "ls-files"], cwd=str(moved))
-        gitdir = executor.run(
-            ["git", "rev-parse", "--absolute-git-dir"], cwd=str(moved)
-        )
 
-        assert result.ok, result.stderr
-        assert gitdir.stdout.strip().startswith(str(elsewhere))
-
-    def test_reverse_pointer_is_left_absolute(self, main_repo, added_worktree):
-        """The admin dir's gitdir file keeps git's absolute path to the worktree.
-
-        Not an arbitrary choice: git below 2.48 resolves a relative reverse
-        pointer against the current working directory, not the admin dir.
-        """
-        reverse = main_repo / ".git" / "worktrees" / WORKTREE_NAME / "gitdir"
-        recorded = reverse.read_text().strip()
-
-        assert os.path.isabs(recorded)
-        assert pathlib.Path(recorded).resolve() == (added_worktree / ".git").resolve()
+        assert not result.ok
+        assert "not a git repository" in result.stderr
 
     def test_worktree_is_not_prunable_after_add(self, main_repo, added_worktree):
-        """The main clone's bookkeeping survives provisioning.
+        """The main clone's worktree bookkeeping is left intact.
 
-        Making the reverse pointer relative breaks this on git < 2.48: the
-        worktree reads as prunable and `git worktree prune` proposes deleting
-        its admin metadata out from under whoever is working in it.
+        Guards against reintroducing a pointer rewrite here: making the reverse
+        pointer relative breaks this on git < 2.48, where the worktree reads as
+        prunable and `git worktree prune` proposes deleting its admin metadata
+        out from under whoever is working in it.
         """
         listed = executor.run(
             ["git", "worktree", "list", "--porcelain"], cwd=str(main_repo)
@@ -583,7 +548,9 @@ class TestGitWorktreeAddProvisioning:
 
         assert resolved == added_worktree.resolve()
 
-    def test_relative_path_is_resolved_against_the_repo(self, main_repo, tmp_path):
+    def test_relative_path_is_resolved_against_the_repo(
+        self, main_repo, tmp_path, worktree_config
+    ):
         """A path relative to the repo is provisioned, not just an absolute one."""
         result = git_write.git_worktree(
             WORKTREE_REPO,
@@ -595,8 +562,8 @@ class TestGitWorktreeAddProvisioning:
         worktree = tmp_path / "my-org" / WORKTREE_NAME
 
         assert result["ok"] is True, result["stderr"]
-        assert not os.path.isabs(pointer_target(worktree))
         assert (worktree / "README.md").is_file()
+        assert (worktree / worktree_config.token_filename).is_file()
 
 
 class TestGitCheckout:
