@@ -1,10 +1,13 @@
 """Tests for git_sidecar.tools.git_write."""
 
 import pathlib
+import shutil
+import stat
 from unittest.mock import patch
 
 import pytest
 
+from git_sidecar import auth, executor
 from git_sidecar.config import SidecarConfig
 from git_sidecar.executor import ExecResult
 from git_sidecar.tools import git_write
@@ -288,6 +291,85 @@ class TestGitMerge:
         )
 
 
+# ---------------------------------------------------------------------------
+# Worktree fixtures — provisioning is filesystem behaviour, so these build real
+# directories (and, where the point is what git itself writes, a real repo).
+# ---------------------------------------------------------------------------
+
+WORKTREE_REPO = "my-org/my-repo"
+WORKTREE_NAME = "my-worktree"
+WORKTREE_TOKEN = "worktree-token"
+
+GIT_IDENTITY = {
+    "GIT_AUTHOR_NAME": "Test",
+    "GIT_AUTHOR_EMAIL": "test@example.com",
+    "GIT_COMMITTER_NAME": "Test",
+    "GIT_COMMITTER_EMAIL": "test@example.com",
+}
+
+
+def init_git_repo(repo: pathlib.Path) -> None:
+    """Initialize a real git repository with a single commit."""
+    executor.run(["git", "init", "-q", "-b", "main", "."], cwd=str(repo))
+    (repo / "README.md").write_text("hello\n")
+    executor.run(["git", "add", "README.md"], cwd=str(repo))
+    executor.run(["git", "commit", "-q", "-m", "init"], cwd=str(repo), env=GIT_IDENTITY)
+
+
+@pytest.fixture()
+def worktree_config(tmp_path):
+    """Config rooted at a temp projects dir, with a non-default token filename."""
+    return SidecarConfig(
+        projects_dir=str(tmp_path),
+        allowed_branch_prefixes=PREFIXES,
+        token_filename=".custom-token",  # noqa: S106 — proves it is not hardcoded
+    )
+
+
+@pytest.fixture()
+def fake_repo(worktree_config, tmp_path):
+    """Repo directory with a token file, pointed at by git_write (no real git)."""
+    repo = tmp_path / "my-org" / "my-repo"
+    repo.mkdir(parents=True)
+    (repo / worktree_config.token_filename).write_text(WORKTREE_TOKEN + "\n")
+    git_write.init(worktree_config)
+    return repo
+
+
+@pytest.fixture()
+def fake_worktree(fake_repo, tmp_path):
+    """Directory git would just have created for a new worktree."""
+    worktree = tmp_path / "my-org" / WORKTREE_NAME
+    worktree.mkdir()
+    return worktree
+
+
+@pytest.fixture()
+def main_repo(worktree_config, tmp_path):
+    """Real git repo with a commit and a token file, pointed at by git_write."""
+    repo = tmp_path / "my-org" / "my-repo"
+    repo.mkdir(parents=True)
+    init_git_repo(repo)
+    (repo / worktree_config.token_filename).write_text(WORKTREE_TOKEN + "\n")
+    git_write.init(worktree_config)
+    return repo
+
+
+@pytest.fixture()
+def added_worktree(main_repo, tmp_path):
+    """Worktree created through the tool against a real repo."""
+    worktree = tmp_path / "my-org" / WORKTREE_NAME
+    result = git_write.git_worktree(
+        WORKTREE_REPO,
+        WORKTREE_TOKEN,
+        action="add",
+        path=str(worktree),
+        branch="task/new-feature",
+    )
+    assert result["ok"] is True, result["stderr"]
+    return worktree
+
+
 class TestGitWorktree:
     """Tests for git_worktree."""
 
@@ -306,33 +388,182 @@ class TestGitWorktree:
             ["git", "worktree", "remove", wt_path], cwd=str(REPO_PATH)
         )
 
-    def test_add(self, mock_verify, mock_run):
+    def test_add(self, fake_repo, fake_worktree, mock_run):
         """Add action calls git worktree add with path."""
-        git_write.git_worktree(
-            "my-org/my-repo", "token", action="add", path="/worktrees/new-wt"
+        result = git_write.git_worktree(
+            WORKTREE_REPO, WORKTREE_TOKEN, action="add", path=str(fake_worktree)
         )
+        assert result["ok"] is True
         mock_run.assert_called_once_with(
-            ["git", "worktree", "add", "/worktrees/new-wt"], cwd=str(REPO_PATH)
+            ["git", "worktree", "add", str(fake_worktree)], cwd=str(fake_repo)
         )
 
-    def test_add_with_branch(self, mock_verify, mock_run):
+    def test_add_with_branch(self, fake_repo, fake_worktree, mock_run):
         """Add action with branch calls git worktree add with -b flag."""
-        git_write.git_worktree(
-            "my-org/my-repo",
-            "token",
+        result = git_write.git_worktree(
+            WORKTREE_REPO,
+            WORKTREE_TOKEN,
             action="add",
-            path="/worktrees/new-wt",
+            path=str(fake_worktree),
             branch="task/new-feature",
         )
+        assert result["ok"] is True
         mock_run.assert_called_once_with(
-            ["git", "worktree", "add", "/worktrees/new-wt", "-b", "task/new-feature"],
-            cwd=str(REPO_PATH),
+            ["git", "worktree", "add", str(fake_worktree), "-b", "task/new-feature"],
+            cwd=str(fake_repo),
         )
 
     def test_invalid_action(self, mock_verify):
         """Arbitrary invalid action is blocked."""
         with pytest.raises(ValidationError, match="Invalid worktree action"):
             git_write.git_worktree("my-org/my-repo", "token", action="prune")
+
+    def test_list_does_not_copy_the_token(
+        self, fake_worktree, worktree_config, mock_run
+    ):
+        """List action provisions nothing."""
+        result = git_write.git_worktree(WORKTREE_REPO, WORKTREE_TOKEN, action="list")
+
+        assert result["ok"] is True
+        assert not (fake_worktree / worktree_config.token_filename).exists()
+
+    def test_remove_does_not_copy_the_token(
+        self, fake_worktree, worktree_config, mock_run
+    ):
+        """Remove action provisions nothing."""
+        result = git_write.git_worktree(
+            WORKTREE_REPO, WORKTREE_TOKEN, action="remove", path=str(fake_worktree)
+        )
+
+        assert result["ok"] is True
+        assert not (fake_worktree / worktree_config.token_filename).exists()
+
+    def test_failed_add_does_not_copy_the_token(self, fake_worktree, worktree_config):
+        """A failed git worktree add is returned as-is, with nothing provisioned."""
+        with patch(
+            "git_sidecar.tools.git_write.executor.run", return_value=FAIL_RESULT
+        ):
+            result = git_write.git_worktree(
+                WORKTREE_REPO, WORKTREE_TOKEN, action="add", path=str(fake_worktree)
+            )
+
+        assert result["ok"] is False
+        assert result["stderr"] == "error"
+        assert not (fake_worktree / worktree_config.token_filename).exists()
+
+    def test_add_reports_provisioning_failure(self, fake_repo, tmp_path, mock_run):
+        """Provisioning failure surfaces to the caller, not a success-looking result."""
+        missing = tmp_path / "my-org" / "never-created"
+
+        result = git_write.git_worktree(
+            WORKTREE_REPO, WORKTREE_TOKEN, action="add", path=str(missing)
+        )
+
+        assert result["ok"] is False
+        assert result["returncode"] != 0
+        assert "provision" in result["stderr"]
+        assert WORKTREE_TOKEN not in result["stderr"]
+
+
+class TestGitWorktreeAddProvisioning:
+    """Tests for the token file a new worktree needs but never inherits."""
+
+    def test_worktree_is_usable_by_git(self, added_worktree):
+        """Git runs inside the new worktree — e.g. a suite shelling out to git."""
+        result = executor.run(["git", "ls-files"], cwd=str(added_worktree))
+
+        assert result.ok, result.stderr
+        assert "README.md" in result.stdout
+
+    def test_worktree_requires_one_absolute_path_for_every_user(
+        self, added_worktree, tmp_path
+    ):
+        """Pins the deployment requirement: one tree, one absolute path.
+
+        `git worktree add` records absolute paths in both of a worktree's
+        pointer files, so a worktree is usable only under the prefix it was
+        created with. The sidecar and the agent must therefore see the
+        repository at the same absolute path; a container that mounts it
+        elsewhere breaks every worktree it creates for the other user, and no
+        post-processing in this module can compensate for that.
+        """
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        shutil.move(tmp_path / "my-org", elsewhere / "my-org")
+        moved = elsewhere / "my-org" / WORKTREE_NAME
+
+        result = executor.run(["git", "ls-files"], cwd=str(moved))
+
+        assert not result.ok
+        assert "not a git repository" in result.stderr
+
+    def test_worktree_is_not_prunable_after_add(self, main_repo, added_worktree):
+        """The main clone's worktree bookkeeping is left intact.
+
+        Guards against reintroducing a pointer rewrite here: making the reverse
+        pointer relative breaks this on git < 2.48, where the worktree reads as
+        prunable and `git worktree prune` proposes deleting its admin metadata
+        out from under whoever is working in it.
+        """
+        listed = executor.run(
+            ["git", "worktree", "list", "--porcelain"], cwd=str(main_repo)
+        )
+        pruned = executor.run(
+            ["git", "worktree", "prune", "-n", "-v"], cwd=str(main_repo)
+        )
+
+        # "prunable" is a porcelain annotation line, not a substring match —
+        # pytest's tmp_path is named after this test and contains the word.
+        annotations = [
+            line for line in listed.stdout.splitlines() if line.startswith("prunable")
+        ]
+
+        assert str(added_worktree) in listed.stdout
+        assert annotations == []
+        assert pruned.stdout.strip() == ""
+
+    def test_token_file_is_copied(self, main_repo, added_worktree, worktree_config):
+        """The gitignored token file travels, under the configured filename."""
+        copied = added_worktree / worktree_config.token_filename
+
+        assert copied.is_file()
+        assert (
+            copied.read_text()
+            == (main_repo / worktree_config.token_filename).read_text()
+        )
+
+    def test_token_file_is_group_writable(self, added_worktree, worktree_config):
+        """Mode 0o660 — the sidecar and the agent are different users, same group."""
+        copied = added_worktree / worktree_config.token_filename
+
+        assert stat.S_IMODE(copied.stat().st_mode) == 0o660
+
+    def test_sidecar_calls_against_the_worktree_authorize(
+        self, added_worktree, worktree_config
+    ):
+        """verify_token succeeds in the new worktree without a manual token drop."""
+        resolved = auth.verify_token(
+            worktree_config, f"my-org/{WORKTREE_NAME}", WORKTREE_TOKEN
+        )
+
+        assert resolved == added_worktree.resolve()
+
+    def test_relative_path_is_resolved_against_the_repo(
+        self, main_repo, tmp_path, worktree_config
+    ):
+        """A path relative to the repo is provisioned, not just an absolute one."""
+        result = git_write.git_worktree(
+            WORKTREE_REPO,
+            WORKTREE_TOKEN,
+            action="add",
+            path=f"../{WORKTREE_NAME}",
+            branch="task/relative",
+        )
+        worktree = tmp_path / "my-org" / WORKTREE_NAME
+
+        assert result["ok"] is True, result["stderr"]
+        assert (worktree / "README.md").is_file()
+        assert (worktree / worktree_config.token_filename).is_file()
 
 
 class TestGitCheckout:

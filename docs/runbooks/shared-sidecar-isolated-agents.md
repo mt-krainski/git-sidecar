@@ -275,6 +275,62 @@ it does not eliminate the other `.git/config` vectors.
 > container with empty `/home//Projects:/projects/` mounts. The array form above is
 > immune to that — every line is a complete statement.
 
+### Worktrees: every user must see a repo at the same absolute path
+
+> **The mount above does not satisfy this.** `-v /home/$u/Projects:/projects/$u` gives the
+> sidecar and the agent *different* absolute paths for the same tree. That is fine for
+> ordinary git operations, and broken for worktrees. If you use `git_worktree`, mount each
+> agent's `Projects` at its host path instead and set `PROJECTS_DIR` to match — see
+> "Aligning the mount" below.
+
+git records **absolute** paths when it creates a worktree, in both directions:
+
+- the new worktree's `.git` file names the admin directory in the main clone
+  (`gitdir: <main>/.git/worktrees/<name>`), and
+- the main clone's `<main>/.git/worktrees/<name>/gitdir` names the worktree.
+
+Neither is ever rewritten, and `git_worktree(action="add")` does not rewrite them either —
+below git 2.48 there is no relative form that works (measured; see the table). So a worktree
+is usable only by users who see the tree at the path whoever created it saw. Create one
+through a sidecar that sees `/projects/agent-01/repo` and the agent user, which sees
+`/home/agent-01/Projects/repo`, gets:
+
+- **inside the worktree:** `fatal: not a git repository: /projects/.../.git/worktrees/<name>` —
+  every git command fails, including anything a test suite shells out to.
+- **from the main clone:** the worktree is listed at its stale path and annotated
+  `prunable`, and `git worktree prune` there **deletes the admin metadata of a worktree
+  someone is actively working in**.
+
+Measured on git 2.34.1, for each form the `gitdir` pointer could take (rows 3–4 with a
+relative forward pointer, so the worktree itself still opens):
+
+| reverse pointer form                            | `prune -n` from the main clone | `prune -n` from inside the worktree |
+| ----------------------------------------------- | ------------------------------ | ----------------------------------- |
+| absolute, path valid for the caller (aligned)   | safe                           | safe                                |
+| absolute, path from the other namespace         | **proposes removal**           | git cannot open the repo at all     |
+| relative to the admin dir (the git 2.48 form)   | **proposes removal**           | **proposes removal**                |
+| relative to the main clone's toplevel           | safe                           | **proposes removal**                |
+
+The last two rows are why this is not fixable in the sidecar: git below 2.48 resolves a
+relative reverse pointer against the *current working directory*, not the admin directory,
+so a relative pointer is safe from some directories and destructive from others.
+
+**Two real remedies:**
+
+1. **Aligning the mount.** Mount each agent's `Projects` at the same absolute path the
+   agent uses (`-v "/home/$u/Projects:/home/$u/Projects"`), and set `PROJECTS_DIR` to a
+   root that contains them (e.g. `-e PROJECTS_DIR=/home`). Two knock-on changes: repos are
+   then addressed as `<agent>/Projects/<repo>` rather than `<agent>/<repo>`, and the image's
+   system `safe.directory` glob (`/projects/*`, set in the Dockerfile) no longer matches the
+   new path — widen it, or the sidecar will refuse repos owned by the agent uid.
+2. **git >= 2.48 on both sides**, with `worktree.useRelativePaths=true`, which writes *and*
+   reads both pointers relative and removes the dependency on absolute paths entirely.
+
+**Per-worktree remediation:** `git worktree repair <path>` rewrites the pointers to absolute
+paths **in the invoking user's namespace**. It fixes an already-broken worktree for whoever
+runs it and mirrors the breakage onto the other user, so it is a stopgap for existing
+worktrees, not a substitute for aligned paths.
+
 ### Per-repo authorization (once per repo)
 
 Each repo an agent should reach needs a token file readable by that agent. As the agent
@@ -288,6 +344,10 @@ git-sidecar-token ~/Projects/<repo>     # writes ~/Projects/<repo>/.git-sidecar-
 
 The agent then addresses that repo to the MCP server as `<agent>/<repo>` (e.g.
 `agent-01/my-repo`) and passes the token with each call.
+
+The token file is gitignored, so `git worktree add` does not carry it into a new worktree —
+`git_worktree(action="add")` copies it in (mode `0o660`, group-writable for the sidecar and
+the agent both) so a worktree is reachable without a second `git-sidecar-token` run.
 
 ### Adding an agent later
 

@@ -1,5 +1,8 @@
 """Git write tools for the git-sidecar MCP server."""
 
+import pathlib
+import shutil
+
 from git_sidecar import auth, executor
 from git_sidecar.config import SidecarConfig
 from git_sidecar.tools.git_lfs import LFS_TIMEOUT
@@ -14,6 +17,8 @@ _config: SidecarConfig | None = None
 
 ALLOWED_STASH_ACTIONS = frozenset({"push", "pop", "apply", "drop", "show"})
 ALLOWED_WORKTREE_ACTIONS = frozenset({"add", "list", "remove"})
+
+WORKTREE_TOKEN_MODE = 0o660
 
 
 def init(config: SidecarConfig) -> None:
@@ -159,6 +164,28 @@ def git_merge(repo: str, token: str, branch: str) -> dict:
     return result.to_dict()
 
 
+def _copy_token_file(
+    config: SidecarConfig, repo_path: pathlib.Path, worktree_path: pathlib.Path
+) -> None:
+    """Copy the repository's token file into a new worktree.
+
+    The token file is gitignored, so a fresh worktree has none and the first
+    sidecar call against it fails authorization. Mode 0o660 keeps it readable
+    by the sidecar and the agent, who are different users sharing a group.
+
+    Args:
+        config: Server configuration, which names the token file.
+        repo_path: Path to the main repository.
+        worktree_path: Directory of the newly created worktree.
+
+    Raises:
+        OSError: If the token file cannot be copied.
+    """
+    destination = worktree_path / config.token_filename
+    shutil.copyfile(repo_path / config.token_filename, destination)
+    destination.chmod(WORKTREE_TOKEN_MODE)
+
+
 def git_worktree(
     repo: str,
     token: str,
@@ -166,7 +193,17 @@ def git_worktree(
     path: str | None = None,
     branch: str | None = None,
 ) -> dict:
-    """Manage worktrees. action: add, list, remove."""
+    """Manage worktrees. action: add, list, remove.
+
+    A new worktree gets a copy of the repository's token file, which is
+    gitignored and so never travels with `git worktree add`.
+
+    An added worktree is usable only where the tree is mounted at the same
+    absolute path for every user of the repository: git records absolute paths
+    in both of a worktree's pointer files, so a user who sees the tree under a
+    different prefix gets "not a git repository", and the main clone reports
+    the worktree as prunable.
+    """
     if action not in ALLOWED_WORKTREE_ACTIONS:
         allowed = ", ".join(sorted(ALLOWED_WORKTREE_ACTIONS))
         raise ValidationError(f"Invalid worktree action '{action}'. Allowed: {allowed}")
@@ -184,6 +221,22 @@ def git_worktree(
         args.append(path)
 
     result = executor.run(args, cwd=str(repo_path))
+
+    if action == "add" and path is not None and result.ok:
+        worktree_path = repo_path / path
+        try:
+            _copy_token_file(config, repo_path, worktree_path)
+        except OSError as exc:
+            return {
+                "ok": False,
+                "returncode": 1,
+                "stdout": result.stdout,
+                "stderr": (
+                    f"worktree added at {worktree_path} but its token file "
+                    f"could not be provisioned: {exc}"
+                ),
+            }
+
     return result.to_dict()
 
 
