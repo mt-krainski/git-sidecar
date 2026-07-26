@@ -78,6 +78,12 @@ The agent provides this token with every tool call. The sidecar verifies it usin
 
 **GitHub** (10): `gh_pr_create`, `gh_pr_edit`, `gh_pr_view`, `gh_pr_list`, `gh_pr_fetch`, `gh_pr_reply`, `gh_pr_checks`, `gh_pr_close`, `gh_run_view`, `gh_run_list`
 
+### Diffs written to a file
+
+`git_diff` takes an optional `output` and writes the diff there instead of returning it, so a large diff need not pass through the caller. The result carries the path written and a `--stat` overview — a second git call, not a check on the file.
+
+`output` is relative to `<repo>/.git-sidecar/` and confined to it. The directory is created on first use with a `.gitignore` of `*`, so it ignores everything it holds, itself included, and no repository needs an ignore entry of its own; an existing directory is left as found.
+
 ### Git LFS
 
 The image bundles `git-lfs` with its smudge/clean filters registered system-wide, so checkouts and pulls in LFS repositories resolve pointer files automatically. `git_push` uploads LFS objects for the current branch before pushing refs — this works even in repositories that lack the repo-local LFS pre-push hook (e.g. cloned before LFS was installed), and refs are never pushed if the object upload fails. LFS transfers get a 10-minute timeout instead of the 60-second default.

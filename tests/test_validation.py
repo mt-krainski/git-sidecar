@@ -4,6 +4,7 @@ import pytest
 
 from git_sidecar.validation import (
     ValidationError,
+    resolve_output_path,
     validate_branch_prefix,
     validate_checkout_target,
     validate_file_args,
@@ -141,3 +142,123 @@ class TestValidateFileArgs:
     def test_empty_list(self):
         """Empty file list passes."""
         validate_file_args([])
+
+
+class TestResolveOutputPath:
+    """Tests for resolve_output_path.
+
+    The base is the directory an output path is confined to — a resolved
+    absolute path the caller supplies.
+    """
+
+    @pytest.fixture()
+    def base(self, tmp_path):
+        """Resolved base directory that does not exist yet."""
+        return tmp_path.resolve() / "repo" / ".git-sidecar"
+
+    def test_relative_path(self, base):
+        """A relative path resolves against the base."""
+        assert resolve_output_path(base, "diff.patch") == base / "diff.patch"
+
+    def test_path_need_not_exist_yet(self, base):
+        """Neither the base nor the directories under it need exist."""
+        assert resolve_output_path(base, "packages/2026/diff.patch") == (
+            base / "packages" / "2026" / "diff.patch"
+        )
+
+    def test_empty_rejected(self, base):
+        """An empty path is rejected rather than resolving to the base itself."""
+        with pytest.raises(ValidationError, match="cannot be empty"):
+            resolve_output_path(base, "")
+
+    def test_traversal_rejected(self, base):
+        """'..' cannot walk out of the base."""
+        with pytest.raises(ValidationError, match="escapes"):
+            resolve_output_path(base, "../README.md")
+
+    def test_traversal_that_lands_inside_is_allowed(self, base):
+        """The rule is where the path lands, not how it is spelled."""
+        assert resolve_output_path(base, "packages/../diff.patch") == (
+            base / "diff.patch"
+        )
+
+    def test_absolute_rejected(self, base):
+        """An absolute path is rejected: output is relative to the base."""
+        with pytest.raises(ValidationError, match="must be relative"):
+            resolve_output_path(base, "/etc/passwd")
+
+    def test_absolute_inside_the_base_rejected(self, base):
+        """An absolute path that lands inside is rejected too — the contract is relative."""  # noqa: E501
+        with pytest.raises(ValidationError, match="must be relative"):
+            resolve_output_path(base, str(base / "diff.patch"))
+
+    def test_base_itself_rejected(self, base):
+        """A path naming the base rather than a file below it is rejected."""
+        with pytest.raises(ValidationError, match="must name a file"):
+            resolve_output_path(base, ".")
+
+    def test_null_byte_rejected(self, base):
+        """An embedded null is a validation failure, not a bare ValueError."""
+        with pytest.raises(ValidationError, match="null byte"):
+            resolve_output_path(base, "diff\0.patch")
+
+    def test_unresolvable_path_rejected(self, tmp_path):
+        """A symlink loop is a validation failure, not a bare RuntimeError."""
+        base = tmp_path.resolve() / ".git-sidecar"
+        base.mkdir()
+        (base / "loop").symlink_to("loop")
+
+        with pytest.raises(ValidationError, match="cannot be resolved"):
+            resolve_output_path(base, "loop")
+
+    def test_error_names_the_directory(self, base):
+        """The message tells an agent which directory it has to stay inside."""
+        with pytest.raises(ValidationError, match=r"\.git-sidecar"):
+            resolve_output_path(base, "../README.md")
+
+    def test_symlinked_directory_escape_rejected(self, tmp_path):
+        """A symlinked directory inside the base cannot land the file outside."""
+        base = tmp_path.resolve() / ".git-sidecar"
+        base.mkdir()
+        outside = tmp_path.resolve() / "outside"
+        outside.mkdir()
+        (base / "link").symlink_to(outside)
+
+        with pytest.raises(ValidationError, match="escapes"):
+            resolve_output_path(base, "link/escape.patch")
+
+    def test_symlinked_file_escape_rejected(self, tmp_path):
+        """A symlink at the path itself is followed before the check."""
+        base = tmp_path.resolve() / ".git-sidecar"
+        base.mkdir()
+        outside = tmp_path.resolve() / "outside.patch"
+        outside.write_text("")
+        (base / "diff.patch").symlink_to(outside)
+
+        with pytest.raises(ValidationError, match="escapes"):
+            resolve_output_path(base, "diff.patch")
+
+    def test_symlinked_base_rejected(self, tmp_path):
+        """A base that is itself a symlink elsewhere is an escape, not a shortcut."""
+        outside = tmp_path.resolve() / "outside"
+        outside.mkdir()
+        base = tmp_path.resolve() / ".git-sidecar"
+        base.symlink_to(outside)
+
+        with pytest.raises(ValidationError, match="escapes"):
+            resolve_output_path(base, "diff.patch")
+
+    def test_sibling_sharing_a_name_prefix_rejected(self, tmp_path):
+        """Confinement is component-wise, not a string prefix.
+
+        A sibling directory whose name merely starts with the base's is outside
+        the base — a startswith() comparison would admit it.
+        """
+        base = tmp_path.resolve() / "packages"
+        base.mkdir()
+        sibling = tmp_path.resolve() / "packages-backup"
+        sibling.mkdir()
+        (base / "link").symlink_to(sibling)
+
+        with pytest.raises(ValidationError, match="escapes"):
+            resolve_output_path(base, "link/escape.patch")
