@@ -1,5 +1,9 @@
 """Git write tools for the git-sidecar MCP server."""
 
+import os
+import pathlib
+import shutil
+
 from git_sidecar import auth, executor
 from git_sidecar.config import SidecarConfig
 from git_sidecar.tools.git_lfs import LFS_TIMEOUT
@@ -14,6 +18,9 @@ _config: SidecarConfig | None = None
 
 ALLOWED_STASH_ACTIONS = frozenset({"push", "pop", "apply", "drop", "show"})
 ALLOWED_WORKTREE_ACTIONS = frozenset({"add", "list", "remove"})
+
+GITDIR_PREFIX = "gitdir: "
+WORKTREE_TOKEN_MODE = 0o660
 
 
 def init(config: SidecarConfig) -> None:
@@ -159,6 +166,58 @@ def git_merge(repo: str, token: str, branch: str) -> dict:
     return result.to_dict()
 
 
+def _rewrite_gitdir_pointer(worktree_path: pathlib.Path) -> None:
+    """Rewrite a new worktree's .git pointer as a path relative to the worktree.
+
+    `git worktree add` records an absolute gitdir, which only resolves in the
+    namespace that created it — the sidecar sees the tree under its projects
+    mount and the agent sees the same tree under its own home. A relative
+    pointer resolves for both, since both see the same directory structure.
+
+    The reverse pointer (`<main>/.git/worktrees/<name>/gitdir`) is deliberately
+    left as git wrote it: git does not read it from inside the worktree, and
+    both users work with that combination.
+
+    Args:
+        worktree_path: Directory of the newly created worktree.
+
+    Raises:
+        OSError: If the pointer file cannot be read or written.
+        ValueError: If the pointer file is not a gitdir pointer.
+    """
+    pointer_file = worktree_path / ".git"
+    pointer = pointer_file.read_text().strip()
+
+    if not pointer.startswith(GITDIR_PREFIX):
+        raise ValueError(f"{pointer_file} is not a gitdir pointer")
+
+    gitdir = pointer.removeprefix(GITDIR_PREFIX).strip()
+    relative_gitdir = os.path.relpath(gitdir, worktree_path)
+    pointer_file.write_text(f"{GITDIR_PREFIX}{relative_gitdir}\n")
+
+
+def _copy_token_file(
+    config: SidecarConfig, repo_path: pathlib.Path, worktree_path: pathlib.Path
+) -> None:
+    """Copy the repository's token file into a new worktree.
+
+    The token file is gitignored, so a fresh worktree has none and the first
+    sidecar call against it fails authorization. Mode 0o660 keeps it readable
+    by the sidecar and the agent, who are different users sharing a group.
+
+    Args:
+        config: Server configuration, which names the token file.
+        repo_path: Path to the main repository.
+        worktree_path: Directory of the newly created worktree.
+
+    Raises:
+        OSError: If the token file cannot be copied.
+    """
+    destination = worktree_path / config.token_filename
+    shutil.copyfile(repo_path / config.token_filename, destination)
+    destination.chmod(WORKTREE_TOKEN_MODE)
+
+
 def git_worktree(
     repo: str,
     token: str,
@@ -166,7 +225,12 @@ def git_worktree(
     path: str | None = None,
     branch: str | None = None,
 ) -> dict:
-    """Manage worktrees. action: add, list, remove."""
+    """Manage worktrees. action: add, list, remove.
+
+    A new worktree is provisioned for shared use: its gitdir pointer is made
+    relative so it resolves for the sidecar and the agent alike, and the
+    repository's token file is copied in.
+    """
     if action not in ALLOWED_WORKTREE_ACTIONS:
         allowed = ", ".join(sorted(ALLOWED_WORKTREE_ACTIONS))
         raise ValidationError(f"Invalid worktree action '{action}'. Allowed: {allowed}")
@@ -184,6 +248,23 @@ def git_worktree(
         args.append(path)
 
     result = executor.run(args, cwd=str(repo_path))
+
+    if action == "add" and path is not None and result.ok:
+        worktree_path = repo_path / path
+        try:
+            _rewrite_gitdir_pointer(worktree_path)
+            _copy_token_file(config, repo_path, worktree_path)
+        except (OSError, ValueError) as exc:
+            return {
+                "ok": False,
+                "returncode": 1,
+                "stdout": result.stdout,
+                "stderr": (
+                    f"worktree added at {worktree_path} but could not be "
+                    f"provisioned for shared use: {exc}"
+                ),
+            }
+
     return result.to_dict()
 
 
