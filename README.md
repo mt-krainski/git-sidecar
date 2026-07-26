@@ -80,9 +80,11 @@ The agent provides this token with every tool call. The sidecar verifies it usin
 
 ### Diffs written to a file
 
-`git_diff` takes an optional `output` path and writes the diff body there instead of returning it. Git writes the bytes, so nothing re-types them and a review-sized diff never enters the calling agent's context. The result carries the path written and a `--stat` summary of the same selection — a convenience overview from a second git call, not a check on the file.
+`git_diff` takes an optional `output` and writes the diff there instead of returning it, so a large diff need not pass through the caller. The result carries the path written and a `--stat` overview — a second git call, not a check on the file.
 
-`output` is relative to `<repo>/.git-sidecar/` and confined to it: `..`, absolute paths, and symlinks leading out are rejected, so no tracked file can be overwritten. The write does not lean on that check alone — it opens every component with `O_NOFOLLOW` relative to the open directory, so a component swapped afterwards cannot redirect it, and refuses a target that is not a plain unaliased file. The directory is created on first use with a `.gitignore` of `*` — it ignores everything it holds, itself included, so git stays quiet about it and no repository needs an ignore entry of its own.
+`output` is relative to `<repo>/.git-sidecar/` and confined to it. The directory is created on first use with a `.gitignore` of `*`, so it ignores everything it holds, itself included, and no repository needs an ignore entry of its own; an existing directory is left as found.
+
+Confinement is enforced when the file is opened rather than by inspecting the path: each component below the directory is opened with `O_NOFOLLOW` relative to the one above, and the target must be a regular file with no other hard links. A symlink or a hardlink planted at the target is refused, not followed.
 
 ### Git LFS
 

@@ -225,8 +225,7 @@ def git_diff(
     """Show changes between working tree, index, and commits.
 
     With `output` the diff body goes straight from git into a file instead of
-    being returned. Use this for a review-sized diff: git writes the bytes, so
-    nothing re-types them, and none of the body enters the caller's context.
+    being returned, so a large diff need not pass through the caller.
 
     The result carries the path written and a --stat summary of the same
     selection — each changed file with its changed-line counts. The stat is a
@@ -235,12 +234,17 @@ def git_diff(
     changes underneath the two calls can make them disagree.
 
     `output` is a path relative to `<repo>/.git-sidecar/` and must stay inside
-    it; '..', an absolute path, and a symlink leading out are all rejected, so
-    no tracked file can be overwritten. Missing directories are created — the
-    sidecar directory itself on first use, holding a .gitignore of '*' that
-    ignores everything there including itself, so git never reports the written
-    file and no repository needs an ignore entry for it. Deleting diffs once
-    read is the caller's business.
+    it; '..', an absolute path, and a symlink leading out are all rejected.
+    Confinement is enforced when the file is opened, not by inspecting the
+    path: each component below the directory is opened with O_NOFOLLOW relative
+    to the one above, and the target must be a regular file with no other hard
+    links, so a link planted at either is refused rather than followed.
+
+    Missing directories are created — the sidecar directory itself on first
+    use, holding a .gitignore of '*' that ignores everything there including
+    itself, so git never reports the written file and no repository needs an
+    ignore entry for it. An existing directory is left as found. Deleting diffs
+    once read is the caller's business.
 
     An existing file at the path is overwritten; a selection with no changes
     writes an empty file rather than leaving an older diff in place.
