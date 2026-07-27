@@ -11,12 +11,15 @@ from git_sidecar.validation import (
     validate_checkout_target,
     validate_file_args,
     validate_push_branch,
+    validate_remote_name,
 )
 
 _config: SidecarConfig | None = None
 
 ALLOWED_STASH_ACTIONS = frozenset({"push", "pop", "apply", "drop", "show"})
 ALLOWED_WORKTREE_ACTIONS = frozenset({"add", "list", "remove"})
+
+DEFAULT_FETCH_REMOTE = "origin"
 
 WORKTREE_TOKEN_MODE = 0o660
 
@@ -140,11 +143,47 @@ def git_stash(
     return result.to_dict()
 
 
-def git_fetch(repo: str, token: str) -> dict:
-    """Fetch from origin."""
+def _configured_remotes(cwd: str) -> frozenset[str]:
+    """Return the names of the remotes configured in a repository.
+
+    `git remote` prints one name per line, and git rejects a remote name
+    containing whitespace, so the lines are the names — no parsing, and no
+    dependence on the URL column that `git remote -v` would add. A failed
+    command yields no names, so an unreadable repository refuses every remote
+    rather than admitting one.
+
+    Args:
+        cwd: Path to the repository.
+
+    Returns:
+        The configured remote names.
+    """
+    result = executor.run(["git", "remote"], cwd=cwd)
+    return frozenset(result.stdout.splitlines())
+
+
+def git_fetch(repo: str, token: str, remote: str | None = None) -> dict:
+    """Fetch from a remote the repository already has configured.
+
+    Defaults to origin. Any other remote must be one configured in that
+    repository: git takes a URL wherever it takes a remote name, so an
+    unchecked value would fetch from any host the sidecar can reach.
+    """
     config = _get_config()
     repo_path = auth.verify_token(config, repo, token)
-    result = executor.run(["git", "fetch", "origin"], cwd=str(repo_path))
+    cwd = str(repo_path)
+
+    if remote is None:
+        target = DEFAULT_FETCH_REMOTE
+    else:
+        validate_remote_name(remote, _configured_remotes(cwd))
+        target = remote
+
+    # `--` so a remote named like an option — which git permits, and which the
+    # configured-set rule therefore admits — is resolved as a name instead of
+    # parsed as the flag it resembles. Without it, a remote called
+    # `--upload-pack=…` makes a fetch run that command.
+    result = executor.run(["git", "fetch", "--", target], cwd=cwd)
     return result.to_dict()
 
 

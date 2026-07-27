@@ -1,6 +1,7 @@
 """Input validation for branch names, paths, and arguments."""
 
 import pathlib
+from collections.abc import Collection
 
 
 class ValidationError(Exception):
@@ -90,6 +91,39 @@ def validate_checkout_target(
         return
 
     validate_branch_prefix(target, allowed_prefixes)
+
+
+def validate_remote_name(
+    remote: str,
+    configured_remotes: Collection[str],
+) -> None:
+    """Ensure a remote is one the repository already has configured.
+
+    Git takes a URL wherever it takes a remote name, so a remote argument
+    passed through to git is an arbitrary-fetch primitive: it reaches any host
+    the sidecar can reach, which is network egress outside the tool surface
+    that is meant to be the whole permission scope. Membership of the
+    configured set holds fetching to what the operator set up.
+
+    That one rule is the whole check, deliberately: a URL, a filesystem path,
+    an option-looking value and an empty string are all names the repository
+    does not have, so none of them needs a pattern of its own.
+
+    Args:
+        remote: Remote name supplied by the caller.
+        configured_remotes: Names of the remotes configured in that repository.
+
+    Raises:
+        ValidationError: If the remote is not one of configured_remotes.
+    """
+    if remote in configured_remotes:
+        return
+
+    configured = ", ".join(sorted(configured_remotes))
+    raise ValidationError(
+        f"Remote {remote!r} is not configured in this repository. "
+        f"Configured remotes: {configured or '(none)'}"
+    )
 
 
 def validate_no_force_flags(args: list[str]) -> None:
