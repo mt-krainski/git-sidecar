@@ -10,9 +10,11 @@ from git_sidecar.validation import (
     validate_file_args,
     validate_no_force_flags,
     validate_push_branch,
+    validate_remote_name,
 )
 
 PREFIXES = ["task/", "feat/", "kan-"]
+CONFIGURED_REMOTES = frozenset({"origin", "upstream"})
 
 
 class TestValidateBranchPrefix:
@@ -93,6 +95,34 @@ class TestValidateCheckoutTarget:
         """Checking out a branch with invalid prefix is blocked."""
         with pytest.raises(ValidationError):
             validate_checkout_target("release/old", PREFIXES)
+
+
+class TestValidateRemoteName:
+    """Tests for validate_remote_name."""
+
+    def test_configured_remote(self):
+        """A name the repository has configured passes."""
+        validate_remote_name("upstream", CONFIGURED_REMOTES)
+
+    def test_unconfigured_remote(self):
+        """A name the repository does not have is rejected."""
+        with pytest.raises(ValidationError, match="not configured"):
+            validate_remote_name("backup", CONFIGURED_REMOTES)
+
+    def test_no_configured_remotes(self):
+        """A repository with no remotes accepts nothing, origin included."""
+        with pytest.raises(ValidationError, match=r"\(none\)"):
+            validate_remote_name("origin", frozenset())
+
+    def test_message_names_the_rejected_value(self):
+        """The error quotes what was sent, so an invisible character shows up."""
+        with pytest.raises(ValidationError, match="'origin '"):
+            validate_remote_name("origin ", CONFIGURED_REMOTES)
+
+    def test_message_lists_the_configured_remotes(self):
+        """The error tells the caller which names it could have used."""
+        with pytest.raises(ValidationError, match="origin, upstream"):
+            validate_remote_name("backup", CONFIGURED_REMOTES)
 
 
 class TestValidateNoForceFlags:

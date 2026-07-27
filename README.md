@@ -84,6 +84,12 @@ The agent provides this token with every tool call. The sidecar verifies it usin
 
 `output` is relative to `<repo>/.git-sidecar/` and confined to it. The directory is created on first use with a `.gitignore` of `*`, so it ignores everything it holds, itself included, and no repository needs an ignore entry of its own; an existing directory is left as found.
 
+### Fetching a second remote
+
+`git_fetch` takes an optional `remote` and defaults to `origin`, so a fork can fetch the `upstream` it mirrors. The value must name a remote already configured in that repository: the sidecar reads the repository's remotes and rejects anything else, the rejection landing before any fetch starts. Git accepts a URL wherever it accepts a remote name, so passing the value through unchecked would make this an arbitrary-fetch primitive — network egress outside the tool surface. One rule covers the lot: a URL, a filesystem path, an option-looking value and an empty string are all names the repository does not have.
+
+Git also permits a remote to be *named* like an option, which that rule admits, so the remote is passed after a `--` separator. Without it, a remote called `--upload-pack=…` is parsed as the flag it resembles and the fetch runs that command; with it, the name is resolved and the worst case is a fetch from a remote the operator configured themselves.
+
 ### Git LFS
 
 The image bundles `git-lfs` with its smudge/clean filters registered system-wide, so checkouts and pulls in LFS repositories resolve pointer files automatically. `git_push` uploads LFS objects for the current branch before pushing refs — this works even in repositories that lack the repo-local LFS pre-push hook (e.g. cloned before LFS was installed), and refs are never pushed if the object upload fails. LFS transfers get a 10-minute timeout instead of the 60-second default.

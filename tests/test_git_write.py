@@ -260,16 +260,6 @@ class TestGitStash:
             git_write.git_stash("my-org/my-repo", "token", action=action)
 
 
-class TestGitFetch:
-    """Tests for git_fetch."""
-
-    def test_fetch(self, mock_verify, mock_run):
-        """Calls git fetch origin."""
-        result = git_write.git_fetch("my-org/my-repo", "token")
-        assert result["ok"] is True
-        mock_run.assert_called_once_with(["git", "fetch", "origin"], cwd=str(REPO_PATH))
-
-
 class TestGitPull:
     """Tests for git_pull."""
 
@@ -564,6 +554,138 @@ class TestGitWorktreeAddProvisioning:
         assert result["ok"] is True, result["stderr"]
         assert (worktree / "README.md").is_file()
         assert (worktree / worktree_config.token_filename).is_file()
+
+
+# ---------------------------------------------------------------------------
+# Fetch fixtures — a remote is only configured on a real repository, so these
+# build one with a second remote and a real repository behind it to fetch from.
+# ---------------------------------------------------------------------------
+
+UNCONFIGURED_REMOTE = "backup"
+REMOTE_URL = "https://example.com/other/repo.git"
+REMOTE_OPTION = "--upload-pack=/bin/sh"
+OPTION_NAMED_REMOTE = "--upload-pack=false"
+
+
+@pytest.fixture()
+def origin_repo(tmp_path):
+    """Real repository standing in for the fork's own origin."""
+    origin = tmp_path / "remotes" / "origin"
+    origin.mkdir(parents=True)
+    init_git_repo(origin)
+    return origin
+
+
+@pytest.fixture()
+def upstream_repo(tmp_path):
+    """Real repository standing in for the reference repo a fork mirrors."""
+    upstream = tmp_path / "remotes" / "upstream"
+    upstream.mkdir(parents=True)
+    init_git_repo(upstream)
+    return upstream
+
+
+@pytest.fixture()
+def fetch_repo(main_repo, origin_repo, upstream_repo):
+    """Real repo configured with an origin and a non-origin remote."""
+    for name, remote_path in (("origin", origin_repo), ("upstream", upstream_repo)):
+        added = executor.run(
+            ["git", "remote", "add", name, str(remote_path)], cwd=str(main_repo)
+        )
+        assert added.ok, added.stderr
+    return main_repo
+
+
+class TestGitFetch:
+    """Tests for git_fetch."""
+
+    def test_fetch_defaults_to_origin(self, mock_verify, mock_run):
+        """Omitting remote fetches origin, and looks nothing up on the way."""
+        result = git_write.git_fetch("my-org/my-repo", "token")
+
+        assert result["ok"] is True
+        mock_run.assert_called_once_with(
+            ["git", "fetch", "--", "origin"], cwd=str(REPO_PATH)
+        )
+
+    def test_fetches_a_configured_remote(self, fetch_repo, upstream_repo):
+        """A non-origin remote is fetched for real — its new commit lands as a ref."""
+        executor.run(
+            ["git", "commit", "-q", "--allow-empty", "-m", "upstream work"],
+            cwd=str(upstream_repo),
+            env=GIT_IDENTITY,
+        )
+        head = executor.run(["git", "rev-parse", "HEAD"], cwd=str(upstream_repo))
+
+        result = git_write.git_fetch(WORKTREE_REPO, WORKTREE_TOKEN, remote="upstream")
+
+        fetched = executor.run(
+            ["git", "rev-parse", "refs/remotes/upstream/main"], cwd=str(fetch_repo)
+        )
+        assert result["ok"] is True, result["stderr"]
+        assert fetched.stdout.strip() == head.stdout.strip()
+
+    def test_option_looking_name_is_resolved_not_parsed(
+        self, fetch_repo, upstream_repo
+    ):
+        """A remote named like an option is fetched as a name.
+
+        Git permits a remote called `--upload-pack=…`, so the configured-set
+        rule admits one, and `git fetch <name>` without a `--` separator reads
+        it as the option it resembles — running that command. The separator
+        makes the worst case a lookup of a remote the operator configured
+        themselves: drop it and this fetch dies in `false` instead.
+        """
+        added = executor.run(
+            ["git", "remote", "add", "--", OPTION_NAMED_REMOTE, str(upstream_repo)],
+            cwd=str(fetch_repo),
+        )
+        assert added.ok, added.stderr
+
+        result = git_write.git_fetch(
+            WORKTREE_REPO, WORKTREE_TOKEN, remote=OPTION_NAMED_REMOTE
+        )
+
+        fetched = executor.run(
+            ["git", "rev-parse", f"refs/remotes/{OPTION_NAMED_REMOTE}/main"],
+            cwd=str(fetch_repo),
+        )
+        assert result["ok"] is True, result["stderr"]
+        assert fetched.ok, fetched.stderr
+
+    def test_rejects_an_unconfigured_remote(self, fetch_repo):
+        """A name this repository does not have is refused."""
+        with pytest.raises(ValidationError, match="not configured"):
+            git_write.git_fetch(
+                WORKTREE_REPO, WORKTREE_TOKEN, remote=UNCONFIGURED_REMOTE
+            )
+
+    def test_rejects_a_url(self, fetch_repo):
+        """A well-formed URL is refused: git would fetch it, the sidecar will not."""
+        with pytest.raises(ValidationError, match="not configured"):
+            git_write.git_fetch(WORKTREE_REPO, WORKTREE_TOKEN, remote=REMOTE_URL)
+
+    def test_rejects_an_option(self, fetch_repo):
+        """An option-looking value is refused."""
+        with pytest.raises(ValidationError, match="not configured"):
+            git_write.git_fetch(WORKTREE_REPO, WORKTREE_TOKEN, remote=REMOTE_OPTION)
+
+    def test_rejects_an_empty_remote(self, fetch_repo):
+        """An empty string is refused, not quietly treated as the default."""
+        with pytest.raises(ValidationError, match="not configured"):
+            git_write.git_fetch(WORKTREE_REPO, WORKTREE_TOKEN, remote="")
+
+    def test_rejects_before_any_fetch_runs(self, fetch_repo):
+        """The refusal lands before git fetch — no connection is ever attempted."""
+        with patch(
+            "git_sidecar.tools.git_write.executor.run", wraps=executor.run
+        ) as spy:
+            with pytest.raises(ValidationError):
+                git_write.git_fetch(WORKTREE_REPO, WORKTREE_TOKEN, remote=REMOTE_URL)
+
+        commands = [call.args[0] for call in spy.call_args_list]
+        assert ["git", "remote"] in commands
+        assert not any(command[:2] == ["git", "fetch"] for command in commands)
 
 
 class TestGitCheckout:
