@@ -129,7 +129,8 @@ so git would not carry it, and the tool copies it in.
 
 ## 5. Register the endpoint with the agent's MCP client
 
-The server speaks SSE, so the transport is `sse` and the path is `/sse`. As the agent user:
+This deployment leaves the server on its default transport, so the transport is `sse` and the
+path is `/sse`. As the agent user:
 
 ```bash
 claude mcp add --transport sse git-sidecar "http://127.0.0.1:$PORT/sse"
