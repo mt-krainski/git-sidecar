@@ -101,8 +101,27 @@ jobs:
           echo "The sidecar did not answer on port 8900 within 120s." >&2
           exit 1
 
+      # The container tests skip themselves when SIDECAR_CONTAINER_URL is unset,
+      # and a skipped test still exits zero. Assert they ran, so a green job
+      # cannot mean the variable went missing.
       - name: Drive an MCP session against the container
-        run: uv run pytest tests/test_transport.py -k container -rs
+        run: |
+          uv run pytest tests/test_transport.py -k container -rs \
+            --junit-xml=container-results.xml
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("container-results.xml").getroot()
+          suite = root[0] if root.tag == "testsuites" else root
+          ran = int(suite.get("tests", 0))
+          skipped = int(suite.get("skipped", 0))
+
+          if ran < 1 or skipped:
+              raise SystemExit(
+                  f"container tests did not run: {ran} collected, {skipped} skipped"
+              )
+          print(f"container tests ran: {ran}")
+          PY
 
       - name: Show the container log
         if: always()
