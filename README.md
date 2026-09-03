@@ -154,10 +154,21 @@ real server, which is what catches an SDK release the package can no longer impo
 CI runs one more layer that you can run yourself:
 
 ```bash
+fixture=$(mktemp -d)
+mkdir -p "$fixture/my-org/my-repo"
+git init --initial-branch=main "$fixture/my-org/my-repo"
+printf 'test-token' > "$fixture/my-org/my-repo/.git-sidecar-token"
+chmod -R a+rwX "$fixture"
+
 docker build -t git-sidecar:local .
-docker run -d --name git-sidecar-local -p 127.0.0.1:8900:8900 git-sidecar:local
+docker run -d --name git-sidecar-local -p 127.0.0.1:8900:8900 \
+  -v "$fixture:/projects" git-sidecar:local
+
 SIDECAR_CONTAINER_URL=http://127.0.0.1:8900/sse uv run pytest tests/test_transport.py -k container
 ```
+
+The container serves the fixture repository, which is what lets the tests call a tool and not only
+list them.
 
 Wait for a request to `/messages/` to return any status code before you point the test at the
 container. The published port answers as soon as Docker binds it, which is before the server does.
