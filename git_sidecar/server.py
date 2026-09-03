@@ -1,11 +1,11 @@
 """MCP server wiring for git-sidecar."""
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server import MCPServer
 
 from git_sidecar.config import SidecarConfig
 from git_sidecar.tools import git_lfs, git_read, git_write, github
 
-mcp: FastMCP | None = None
+mcp: MCPServer | None = None
 
 _READ_TOOLS = [
     "git_status",
@@ -66,21 +66,21 @@ def _register_tools(module, names: list[str]) -> None:
         mcp.tool()(fn)
 
 
-def create_server(config: SidecarConfig | None = None) -> FastMCP:
+def create_server(config: SidecarConfig | None = None) -> MCPServer:
     """Initialize tools and return the configured MCP server.
 
     Args:
         config: Server configuration. If None, loads from environment.
 
     Returns:
-        Configured FastMCP instance with all tools registered.
+        Configured MCPServer instance with all tools registered.
     """
     global mcp  # noqa: PLW0603
 
     if config is None:
         config = SidecarConfig.from_env()
 
-    mcp = FastMCP("git-sidecar", host=config.host, port=config.port)
+    mcp = MCPServer("git-sidecar")
 
     git_read.init(config)
     git_write.init(config)

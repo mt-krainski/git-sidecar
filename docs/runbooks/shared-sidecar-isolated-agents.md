@@ -358,7 +358,8 @@ No second `gh auth login` — the credential volumes are unchanged.
 
 ## Part 3 — connect an agent's MCP client
 
-Any MCP client that speaks SSE works. With Claude Code, register the sidecar at user scope
+This deployment leaves the server on its default transport, so any MCP client that speaks SSE
+works. With Claude Code, register the sidecar at user scope
 (available in every project), **as the agent user**:
 
 ```bash

@@ -5,7 +5,7 @@
 
 A containerized MCP server that provides secure, credential-isolated Git and GitHub operations for AI agents running in sandboxed environments.
 
-The sidecar holds SSH keys and GitHub credentials; the agent never sees them. Communication happens via MCP tools over SSE, with each operation scoped to a specific repository and authorized via a shared secret token file.
+The sidecar holds SSH keys and GitHub credentials; the agent never sees them. Communication happens via MCP tools over the configured transport, SSE by default, with each operation scoped to a specific repository and authorized via a shared secret token file.
 
 ## Quick start
 
@@ -103,8 +103,11 @@ All configuration is via environment variables:
 | `PROJECTS_DIR`            | `/projects`          | Mount point for project directories                    |
 | `SIDECAR_HOST`            | `0.0.0.0`            | Server bind address                                    |
 | `SIDECAR_PORT`            | `8900`               | Server port                                            |
+| `SIDECAR_TRANSPORT`       | `sse`                | Transport to serve: `sse` or `streamable-http`         |
 | `ALLOWED_BRANCH_PREFIXES` | `task/,dependabot/`  | Comma-separated branch prefixes agents can create/push |
 | `SIDECAR_TOKEN_FILENAME`  | `.git-sidecar-token` | Name of the per-project token file                     |
+
+The server serves one transport at a time. `sse` serves on `/sse` and `streamable-http` serves on `/mcp`, so changing `SIDECAR_TRANSPORT` means repointing every client at the new path. An unrecognized value stops the server at startup rather than falling back to a default.
 
 ## Volume mounts
 
@@ -140,3 +143,21 @@ For one example of a hardened multi-agent setup — one shared sidecar on the ad
 uv run pytest            # run tests
 uv run ruff check .      # lint
 ```
+
+### Test layers
+
+Most tests call the tool functions directly, with the MCP layer mocked away. Those stay green even
+when the server cannot start, so `tests/test_transport.py` runs `python -m git_sidecar` for real and
+drives it with an MCP client over each supported transport. That file is the layer that starts the
+real server, which is what catches an SDK release the package can no longer import.
+
+CI runs one more layer that you can run yourself:
+
+```bash
+docker build -t git-sidecar:local .
+docker run -d --name git-sidecar-local -p 127.0.0.1:8900:8900 git-sidecar:local
+SIDECAR_CONTAINER_URL=http://127.0.0.1:8900/sse uv run pytest tests/test_transport.py -k container
+```
+
+Wait for a request to `/messages/` to return any status code before you point the test at the
+container. The published port answers as soon as Docker binds it, which is before the server does.

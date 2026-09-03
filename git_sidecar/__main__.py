@@ -8,7 +8,7 @@ def main() -> None:
     """Start the git-sidecar MCP server."""
     config = SidecarConfig.from_env()
     server = create_server(config)
-    server.run(transport="sse")
+    server.run(transport=config.transport, host=config.host, port=config.port)
 
 
 if __name__ == "__main__":
