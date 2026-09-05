@@ -10,6 +10,32 @@ class AuthError(Exception):
     """Raised when token verification fails."""
 
 
+def resolve_under_projects(config: SidecarConfig, path: str) -> pathlib.Path:
+    """Resolve a path against projects_dir without requiring it to exist.
+
+    The path need not exist. That absence is the reason this is separate from
+    resolve_repo_path: a worktree location is resolved before it is created.
+
+    Args:
+        config: Server configuration.
+        path: Path relative to the projects directory (e.g. "my-org/my-repo"),
+            or an absolute path inside it.
+
+    Returns:
+        Resolved absolute path.
+
+    Raises:
+        AuthError: If the resolved path escapes the projects directory.
+    """
+    projects = pathlib.Path(config.projects_dir).resolve()
+    resolved = (projects / path).resolve()
+
+    if not resolved.is_relative_to(projects):
+        raise AuthError(f"Path escapes projects directory: {path}")
+
+    return resolved
+
+
 def resolve_repo_path(config: SidecarConfig, repo: str) -> pathlib.Path:
     """Resolve a repo identifier to an absolute path under projects_dir.
 
@@ -23,11 +49,7 @@ def resolve_repo_path(config: SidecarConfig, repo: str) -> pathlib.Path:
     Raises:
         AuthError: If the path escapes the projects directory or doesn't exist.
     """
-    projects = pathlib.Path(config.projects_dir).resolve()
-    repo_path = (projects / repo).resolve()
-
-    if not str(repo_path).startswith(str(projects)):
-        raise AuthError(f"Repo path escapes projects directory: {repo}")
+    repo_path = resolve_under_projects(config, repo)
 
     if not repo_path.is_dir():
         raise AuthError(f"Repository not found: {repo}")

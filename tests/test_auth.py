@@ -2,7 +2,12 @@
 
 import pytest
 
-from git_sidecar.auth import AuthError, resolve_repo_path, verify_token
+from git_sidecar.auth import (
+    AuthError,
+    resolve_repo_path,
+    resolve_under_projects,
+    verify_token,
+)
 from git_sidecar.config import SidecarConfig
 
 
@@ -18,6 +23,44 @@ def projects_dir(tmp_path):
 def config(projects_dir):
     """Config pointing at the temp projects dir."""
     return SidecarConfig(projects_dir=str(projects_dir))
+
+
+class TestResolveUnderProjects:
+    """Tests for resolve_under_projects."""
+
+    def test_path_need_not_exist(self, config, projects_dir):
+        """Resolve a path that has not been created on disk yet."""
+        result = resolve_under_projects(config, "my-org/new-worktree")
+        assert result == (projects_dir / "my-org" / "new-worktree").resolve()
+
+    def test_absolute_path_inside_root(self, config, projects_dir):
+        """An absolute path inside the projects root resolves to itself."""
+        worktree = (projects_dir / "my-org" / "new-worktree").resolve()
+
+        result = resolve_under_projects(config, str(worktree))
+
+        assert result == worktree
+
+    def test_path_traversal_blocked(self, config):
+        """Block ../ escape attempts."""
+        with pytest.raises(AuthError, match="escapes"):
+            resolve_under_projects(config, "../../etc")
+
+    def test_absolute_path_outside_root_blocked(self, config):
+        """Block an absolute path that lands outside the projects root."""
+        with pytest.raises(AuthError, match="escapes"):
+            resolve_under_projects(config, "/etc")
+
+    def test_sibling_sharing_a_name_prefix_rejected(self, config, projects_dir):
+        """Confinement is component-wise, not a string prefix.
+
+        A sibling whose name merely starts with the projects root's is outside
+        the root — a startswith() comparison would admit it.
+        """
+        sibling = f"{projects_dir.resolve()}-backup"
+
+        with pytest.raises(AuthError, match="escapes"):
+            resolve_under_projects(config, sibling)
 
 
 class TestResolveRepoPath:
