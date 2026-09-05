@@ -467,7 +467,7 @@ class TestGitWorktree:
 
         assert result["ok"] is True
         mock_run.assert_called_once_with(
-            ["git", "worktree", "add", str(fake_worktree), "task/new-feature"],
+            ["git", "worktree", "add", "--", str(fake_worktree), "task/new-feature"],
             cwd=str(fake_repo),
         )
 
@@ -623,10 +623,32 @@ class TestGitWorktreeAddProvisioning:
         assert (worktree / "README.md").is_file()
         assert (worktree / worktree_config.token_filename).is_file()
 
+    def test_option_looking_branch_is_not_parsed_as_one(self, main_repo, tmp_path):
+        """An attached branch reaches git as a name, not as the flag it resembles.
+
+        A trailing positional to `git worktree add` is still option-parsed, so
+        `--detach` in the branch slot detaches the new worktree instead of
+        failing. Git refuses to name a branch with a leading dash, so a
+        separator's worst case here is a lookup that finds nothing.
+        """
+        result = git_write.git_worktree(
+            WORKTREE_REPO,
+            WORKTREE_TOKEN,
+            action="add",
+            path=f"my-org/{WORKTREE_NAME}",
+            branch="--detach",
+            create_branch=False,
+        )
+        worktree = tmp_path / "my-org" / WORKTREE_NAME
+
+        assert result["ok"] is False
+        assert not worktree.exists()
+
     def test_a_removed_worktree_is_added_back_on_its_own_branch(
         self, main_repo, added_worktree, tmp_path
     ):
         """The recovery path: drop a worktree, reattach its branch elsewhere."""
+        again = tmp_path / "my-org" / f"{WORKTREE_NAME}-again"
         before = executor.run(
             ["git", "rev-parse", "task/new-feature"], cwd=str(main_repo)
         )
@@ -645,11 +667,15 @@ class TestGitWorktreeAddProvisioning:
         after = executor.run(
             ["git", "rev-parse", "task/new-feature"], cwd=str(main_repo)
         )
+        on_branch = executor.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(again)
+        )
 
         assert removed["ok"] is True, removed["stderr"]
         assert readded["ok"] is True, readded["stderr"]
         assert after.stdout.strip() == before.stdout.strip()
-        assert (tmp_path / "my-org" / f"{WORKTREE_NAME}-again" / "README.md").is_file()
+        assert on_branch.stdout.strip() == "task/new-feature"
+        assert (again / "README.md").is_file()
 
 
 # ---------------------------------------------------------------------------

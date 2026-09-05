@@ -245,7 +245,12 @@ def _worktree_add_args(
     if create_branch:
         return ["-b", branch, str(worktree_path)]
 
-    return [str(worktree_path), branch]
+    # `--` so a branch named like an option is looked up as a name instead of
+    # parsed as the flag it resembles. Without it, `--detach` in this slot
+    # silently produces a detached worktree instead of failing. The two
+    # branches above need no separator: `-b` consumes its own value, and a
+    # resolved path is absolute, so neither can lead with a dash.
+    return ["--", str(worktree_path), branch]
 
 
 def git_worktree(
