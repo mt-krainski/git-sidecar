@@ -156,9 +156,10 @@ misaligned mount, where the worktree is unusable by one of the two users.
 Two things to know about worktrees here. Give `path` the same way you give `repo` — the path from
 `PROJECTS_DIR` down. An absolute path works when it lands inside the mount; one that resolves
 outside fails with "Path escapes projects directory" rather than creating anything. `path` is
-never taken relative to the repository, so `../my-worktree` escapes the mount and fails too. And
-`git_worktree` does not validate the branch name against `ALLOWED_BRANCH_PREFIXES`, so a worktree
-branch that does not carry an allowed prefix is created happily and refused later at push.
+never taken relative to the repository, so `../my-worktree` escapes the mount and fails too. A
+worktree also cannot sit inside the repository it comes from. And `git_worktree` does not validate
+the branch name against `ALLOWED_BRANCH_PREFIXES`, so a worktree branch that does not carry an
+allowed prefix is created happily and refused later at push.
 
 ## Adding or removing an agent
 
