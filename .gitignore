@@ -3,6 +3,7 @@
 .ruff_cache
 .git-sidecar-token
 .mcp.json
+.local/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

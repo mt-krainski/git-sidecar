@@ -153,11 +153,13 @@ As the agent user, against a repository under its `Projects` tree:
 Expected: all four succeed. The last one is the check that distinguishes this arrangement from a
 misaligned mount, where the worktree is unusable by one of the two users.
 
-Two things to know about worktrees here. Give `path` as a location inside the mounted tree — an
-absolute path outside it creates the worktree in the container's own filesystem, where the host
-cannot see it and no `repo` argument addresses it. And `git_worktree` does not validate the
-branch name against `ALLOWED_BRANCH_PREFIXES`, so a worktree branch that does not carry an
-allowed prefix is created happily and refused later at push.
+Worktree paths work like repository paths. Give `path` the same way you give `repo` — the path
+from `PROJECTS_DIR` down. An absolute path works when it lands inside the mount; one that resolves
+outside fails with "Path escapes projects directory" rather than creating anything. `path` is never
+taken relative to the repository, so `../my-worktree` escapes the mount and fails too.
+`git_worktree` also refuses to add a worktree inside the repository it comes from. And it does not
+validate the branch name against `ALLOWED_BRANCH_PREFIXES`, so a worktree branch that does not
+carry an allowed prefix is created happily and refused later at push.
 
 ## Adding or removing an agent
 

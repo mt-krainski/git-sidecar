@@ -298,11 +298,25 @@ GIT_IDENTITY = {
 }
 
 
-def init_git_repo(repo: pathlib.Path) -> None:
-    """Initialize a real git repository with a single commit."""
+def init_git_repo(repo: pathlib.Path, ignore: str | None = None) -> None:
+    """Initialize a real git repository with a single commit.
+
+    Args:
+        repo: Directory to initialize.
+        ignore: Filename to write into a committed .gitignore. A worktree of
+            this repository then stays clean when that file appears in it,
+            which is what `git worktree remove` needs and what production,
+            where the token file is gitignored, actually has.
+    """
     executor.run(["git", "init", "-q", "-b", "main", "."], cwd=str(repo))
     (repo / "README.md").write_text("hello\n")
-    executor.run(["git", "add", "README.md"], cwd=str(repo))
+    tracked = ["README.md"]
+
+    if ignore is not None:
+        (repo / ".gitignore").write_text(ignore + "\n")
+        tracked.append(".gitignore")
+
+    executor.run(["git", "add", *tracked], cwd=str(repo))
     executor.run(["git", "commit", "-q", "-m", "init"], cwd=str(repo), env=GIT_IDENTITY)
 
 
@@ -339,7 +353,7 @@ def main_repo(worktree_config, tmp_path):
     """Real git repo with a commit and a token file, pointed at by git_write."""
     repo = tmp_path / "my-org" / "my-repo"
     repo.mkdir(parents=True)
-    init_git_repo(repo)
+    init_git_repo(repo, ignore=worktree_config.token_filename)
     (repo / worktree_config.token_filename).write_text(WORKTREE_TOKEN + "\n")
     git_write.init(worktree_config)
     return repo
@@ -371,11 +385,21 @@ class TestGitWorktree:
         )
 
     def test_remove(self, mock_verify, mock_run):
-        """Remove action calls git worktree remove with path."""
-        wt_path = "/worktrees/my-wt"
+        """Remove action calls git worktree remove with the resolved path."""
+        wt_path = "/projects/my-org/my-wt"
         git_write.git_worktree("my-org/my-repo", "token", action="remove", path=wt_path)
         mock_run.assert_called_once_with(
             ["git", "worktree", "remove", wt_path], cwd=str(REPO_PATH)
+        )
+
+    def test_remove_resolves_a_relative_path(self, mock_verify, mock_run):
+        """Remove takes a path from the projects root down and resolves it."""
+        git_write.git_worktree(
+            "my-org/my-repo", "token", action="remove", path="my-org/my-wt"
+        )
+        mock_run.assert_called_once_with(
+            ["git", "worktree", "remove", "/projects/my-org/my-wt"],
+            cwd=str(REPO_PATH),
         )
 
     def test_add(self, fake_repo, fake_worktree, mock_run):
@@ -399,7 +423,61 @@ class TestGitWorktree:
         )
         assert result["ok"] is True
         mock_run.assert_called_once_with(
-            ["git", "worktree", "add", str(fake_worktree), "-b", "task/new-feature"],
+            ["git", "worktree", "add", "-b", "task/new-feature", str(fake_worktree)],
+            cwd=str(fake_repo),
+        )
+
+    def test_projects_root_relative_path_is_resolved(
+        self, fake_repo, fake_worktree, mock_run
+    ):
+        """A path from the projects root down reaches git as an absolute path."""
+        result = git_write.git_worktree(
+            WORKTREE_REPO,
+            WORKTREE_TOKEN,
+            action="add",
+            path=f"my-org/{WORKTREE_NAME}",
+        )
+
+        assert result["ok"] is True
+        mock_run.assert_called_once_with(
+            ["git", "worktree", "add", str(fake_worktree)], cwd=str(fake_repo)
+        )
+
+    def test_path_escaping_the_projects_root_is_refused(self, fake_repo, mock_run):
+        """A path outside the projects root raises, and git is never called."""
+        with pytest.raises(auth.AuthError, match="escapes"):
+            git_write.git_worktree(
+                WORKTREE_REPO, WORKTREE_TOKEN, action="add", path="../elsewhere"
+            )
+
+        mock_run.assert_not_called()
+
+    def test_path_inside_the_repository_is_refused(self, fake_repo, mock_run):
+        """A worktree nested in its own repository raises before git runs."""
+        with pytest.raises(ValidationError, match="inside the repository"):
+            git_write.git_worktree(
+                WORKTREE_REPO,
+                WORKTREE_TOKEN,
+                action="add",
+                path=f"{WORKTREE_REPO}/{WORKTREE_NAME}",
+            )
+
+        mock_run.assert_not_called()
+
+    def test_add_attaches_an_existing_branch(self, fake_repo, fake_worktree, mock_run):
+        """create_branch=False puts the branch after the path, without -b."""
+        result = git_write.git_worktree(
+            WORKTREE_REPO,
+            WORKTREE_TOKEN,
+            action="add",
+            path=str(fake_worktree),
+            branch="task/new-feature",
+            create_branch=False,
+        )
+
+        assert result["ok"] is True
+        mock_run.assert_called_once_with(
+            ["git", "worktree", "add", "--", str(fake_worktree), "task/new-feature"],
             cwd=str(fake_repo),
         )
 
@@ -538,15 +616,15 @@ class TestGitWorktreeAddProvisioning:
 
         assert resolved == added_worktree.resolve()
 
-    def test_relative_path_is_resolved_against_the_repo(
+    def test_relative_path_is_resolved_against_the_projects_root(
         self, main_repo, tmp_path, worktree_config
     ):
-        """A path relative to the repo is provisioned, not just an absolute one."""
+        """A projects-root-relative path is provisioned, not just an absolute one."""
         result = git_write.git_worktree(
             WORKTREE_REPO,
             WORKTREE_TOKEN,
             action="add",
-            path=f"../{WORKTREE_NAME}",
+            path=f"my-org/{WORKTREE_NAME}",
             branch="task/relative",
         )
         worktree = tmp_path / "my-org" / WORKTREE_NAME
@@ -554,6 +632,60 @@ class TestGitWorktreeAddProvisioning:
         assert result["ok"] is True, result["stderr"]
         assert (worktree / "README.md").is_file()
         assert (worktree / worktree_config.token_filename).is_file()
+
+    def test_option_looking_branch_is_not_parsed_as_one(self, main_repo, tmp_path):
+        """An attached branch reaches git as a name, not as the flag it resembles.
+
+        A trailing positional to `git worktree add` is still option-parsed, so
+        `--detach` in the branch slot detaches the new worktree instead of
+        failing. Git refuses to name a branch with a leading dash, so a
+        separator's worst case here is a lookup that finds nothing.
+        """
+        result = git_write.git_worktree(
+            WORKTREE_REPO,
+            WORKTREE_TOKEN,
+            action="add",
+            path=f"my-org/{WORKTREE_NAME}",
+            branch="--detach",
+            create_branch=False,
+        )
+        worktree = tmp_path / "my-org" / WORKTREE_NAME
+
+        assert result["ok"] is False
+        assert not worktree.exists()
+
+    def test_a_removed_worktree_is_added_back_on_its_own_branch(
+        self, main_repo, added_worktree, tmp_path
+    ):
+        """The recovery path: drop a worktree, reattach its branch elsewhere."""
+        again = tmp_path / "my-org" / f"{WORKTREE_NAME}-again"
+        before = executor.run(
+            ["git", "rev-parse", "task/new-feature"], cwd=str(main_repo)
+        )
+
+        removed = git_write.git_worktree(
+            WORKTREE_REPO, WORKTREE_TOKEN, action="remove", path=str(added_worktree)
+        )
+        readded = git_write.git_worktree(
+            WORKTREE_REPO,
+            WORKTREE_TOKEN,
+            action="add",
+            path=f"my-org/{WORKTREE_NAME}-again",
+            branch="task/new-feature",
+            create_branch=False,
+        )
+        after = executor.run(
+            ["git", "rev-parse", "task/new-feature"], cwd=str(main_repo)
+        )
+        on_branch = executor.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(again)
+        )
+
+        assert removed["ok"] is True, removed["stderr"]
+        assert readded["ok"] is True, readded["stderr"]
+        assert after.stdout.strip() == before.stdout.strip()
+        assert on_branch.stdout.strip() == "task/new-feature"
+        assert (again / "README.md").is_file()
 
 
 # ---------------------------------------------------------------------------

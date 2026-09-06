@@ -225,12 +225,41 @@ def _copy_token_file(
     destination.chmod(WORKTREE_TOKEN_MODE)
 
 
+def _worktree_add_args(
+    worktree_path: pathlib.Path, branch: str | None, create_branch: bool
+) -> list[str]:
+    """Build the arguments that follow `git worktree add`.
+
+    Args:
+        worktree_path: Resolved absolute location of the new worktree.
+        branch: Branch for the new worktree, or None to let git name one.
+        create_branch: If True, create branch; if False, attach the existing
+            branch of that name.
+
+    Returns:
+        Arguments to append after `git worktree add`.
+    """
+    if branch is None:
+        return [str(worktree_path)]
+
+    if create_branch:
+        return ["-b", branch, str(worktree_path)]
+
+    # `--` so a branch named like an option is looked up as a name instead of
+    # parsed as the flag it resembles. Without it, `--detach` in this slot
+    # silently produces a detached worktree instead of failing. The two
+    # branches above need no separator: `-b` consumes its own value, and a
+    # resolved path is absolute, so neither can lead with a dash.
+    return ["--", str(worktree_path), branch]
+
+
 def git_worktree(
     repo: str,
     token: str,
     action: str = "list",
     path: str | None = None,
     branch: str | None = None,
+    create_branch: bool = True,
 ) -> dict:
     """Manage worktrees. action: add, list, remove.
 
@@ -242,6 +271,29 @@ def git_worktree(
     in both of a worktree's pointer files, so a user who sees the tree under a
     different prefix gets "not a git repository", and the main clone reports
     the worktree as prunable.
+
+    Args:
+        repo: Path to the repository from the projects directory down
+            (e.g. "my-org/my-repo").
+        token: Agent authentication token.
+        action: One of add, list, remove.
+        path: Location of the worktree, given the same way as repo — the path
+            from the projects directory down — or an absolute path inside that
+            directory. Used by add and remove.
+        branch: Branch for the new worktree. Used by add.
+        create_branch: If True, add creates branch; if False, it attaches an
+            existing branch of that name. Ignored when branch is None.
+
+    Returns:
+        ExecResult dict with the output of git worktree. When add succeeds and
+        the token copy then fails, a dict this function wrote instead: "ok"
+        false and a stderr git never produced, for a worktree that exists on
+        disk all the same.
+
+    Raises:
+        ValidationError: If action is not one of add, list, remove, or an
+            added worktree would sit inside the repository it comes from.
+        AuthError: If path falls outside the projects directory.
     """
     if action not in ALLOWED_WORKTREE_ACTIONS:
         allowed = ", ".join(sorted(ALLOWED_WORKTREE_ACTIONS))
@@ -249,20 +301,24 @@ def git_worktree(
 
     config = _get_config()
     repo_path = auth.verify_token(config, repo, token)
+    worktree_path = (
+        auth.resolve_under_projects(config, path) if path is not None else None
+    )
     args = ["git", "worktree", action]
 
-    if action == "add" and path is not None:
-        args.append(path)
-        if branch is not None:
-            args.extend(["-b", branch])
+    if action == "add" and worktree_path is not None:
+        if worktree_path.is_relative_to(repo_path):
+            raise ValidationError(
+                f"Worktree path is inside the repository it belongs to: {path!r}"
+            )
+        args.extend(_worktree_add_args(worktree_path, branch, create_branch))
 
-    if action == "remove" and path is not None:
-        args.append(path)
+    if action == "remove" and worktree_path is not None:
+        args.append(str(worktree_path))
 
     result = executor.run(args, cwd=str(repo_path))
 
-    if action == "add" and path is not None and result.ok:
-        worktree_path = repo_path / path
+    if action == "add" and worktree_path is not None and result.ok:
         try:
             _copy_token_file(config, repo_path, worktree_path)
         except OSError as exc:
