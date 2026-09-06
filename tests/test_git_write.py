@@ -392,6 +392,16 @@ class TestGitWorktree:
             ["git", "worktree", "remove", wt_path], cwd=str(REPO_PATH)
         )
 
+    def test_remove_resolves_a_relative_path(self, mock_verify, mock_run):
+        """Remove takes a path from the projects root down and resolves it."""
+        git_write.git_worktree(
+            "my-org/my-repo", "token", action="remove", path="my-org/my-wt"
+        )
+        mock_run.assert_called_once_with(
+            ["git", "worktree", "remove", "/projects/my-org/my-wt"],
+            cwd=str(REPO_PATH),
+        )
+
     def test_add(self, fake_repo, fake_worktree, mock_run):
         """Add action calls git worktree add with path."""
         result = git_write.git_worktree(

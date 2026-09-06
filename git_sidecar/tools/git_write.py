@@ -285,7 +285,10 @@ def git_worktree(
             existing branch of that name. Ignored when branch is None.
 
     Returns:
-        ExecResult dict with the output of git worktree.
+        ExecResult dict with the output of git worktree. When add succeeds and
+        the token copy then fails, a dict this function wrote instead: "ok"
+        false and a stderr git never produced, for a worktree that exists on
+        disk all the same.
 
     Raises:
         ValidationError: If action is not one of add, list, remove, or an
