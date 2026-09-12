@@ -5,7 +5,7 @@
 
 A containerized MCP server that provides secure, credential-isolated Git and GitHub operations for AI agents running in sandboxed environments.
 
-The sidecar holds SSH keys and GitHub credentials; the agent never sees them. Communication happens via MCP tools over the configured transport, SSE by default, with each operation scoped to a specific repository and authorized via a shared secret token file.
+The sidecar holds SSH keys and GitHub credentials; the agent never sees them. Communication happens via MCP tools over the configured transport, Streamable HTTP by default, with each operation scoped to a specific repository and authorized via a shared secret token file.
 
 ## Quick start
 
@@ -18,7 +18,7 @@ docker build \
   -t git-sidecar .
 ```
 
-Run, publishing the SSE endpoint to host loopback so a host-side MCP client can reach it. SSH keys and `gh` credentials live in named volumes so they survive container restarts and stay isolated from host user keys:
+Run, publishing the Streamable HTTP endpoint to host loopback so a host-side MCP client can reach it. SSH keys and `gh` credentials live in named volumes so they survive container restarts and stay isolated from host user keys:
 
 ```bash
 docker run -d \
@@ -33,14 +33,15 @@ docker run -d \
   git-sidecar
 ```
 
-The MCP client connects to `http://127.0.0.1:8900/sse`.
+The MCP client connects to `http://127.0.0.1:8900/mcp`.
 
 If the MCP client also runs in a container, replace `-p 127.0.0.1:8900:8900` with a shared bridge network (`docker network create git-sidecar-net` once, then `--network git-sidecar-net` on both containers).
 
-To register the sidecar with Claude, run:
+Register the sidecar with Claude Code or Codex. Both clients connect directly to the endpoint:
 
 ```bash
-claude mcp add --transport sse git-sidecar http://127.0.0.1:8900/sse
+claude mcp add --transport http git-sidecar http://127.0.0.1:8900/mcp
+codex mcp add git-sidecar --url http://127.0.0.1:8900/mcp
 ```
 
 ### First-run setup
@@ -103,11 +104,11 @@ All configuration is via environment variables:
 | `PROJECTS_DIR`            | `/projects`          | Mount point for project directories                    |
 | `SIDECAR_HOST`            | `0.0.0.0`            | Server bind address                                    |
 | `SIDECAR_PORT`            | `8900`               | Server port                                            |
-| `SIDECAR_TRANSPORT`       | `sse`                | Transport to serve: `sse` or `streamable-http`         |
+| `SIDECAR_TRANSPORT`       | `streamable-http`    | Transport to serve: `sse` or `streamable-http`         |
 | `ALLOWED_BRANCH_PREFIXES` | `task/,dependabot/`  | Comma-separated branch prefixes agents can create/push |
 | `SIDECAR_TOKEN_FILENAME`  | `.git-sidecar-token` | Name of the per-project token file                     |
 
-The server serves one transport at a time. `sse` serves on `/sse` and `streamable-http` serves on `/mcp`, so changing `SIDECAR_TRANSPORT` means repointing every client at the new path. An unrecognized value stops the server at startup rather than falling back to a default.
+The server serves one transport at a time. Streamable HTTP is the default and serves on `/mcp`. Set `SIDECAR_TRANSPORT=sse` to use the legacy SSE transport at `/sse`. When changing transports, update every client to use the matching transport and path. An unrecognized value stops the server at startup.
 
 ## Volume mounts
 
@@ -164,11 +165,11 @@ docker build -t git-sidecar:local .
 docker run -d --name git-sidecar-local -p 127.0.0.1:8900:8900 \
   -v "$fixture:/projects" git-sidecar:local
 
-SIDECAR_CONTAINER_URL=http://127.0.0.1:8900/sse uv run pytest tests/test_transport.py -k container
+SIDECAR_CONTAINER_URL=http://127.0.0.1:8900/mcp uv run pytest tests/test_transport.py -k container
 ```
 
 The container serves the fixture repository, which is what lets the tests call a tool and not only
 list them.
 
-Wait for a request to `/messages/` to return any status code before you point the test at the
+Wait for a request to `/mcp` to return any status code before you point the test at the
 container. The published port answers as soon as Docker binds it, which is before the server does.

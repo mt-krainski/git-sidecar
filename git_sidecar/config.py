@@ -50,7 +50,7 @@ class SidecarConfig:
     token_filename: str = ".git-sidecar-token"  # noqa: S105
     host: str = "0.0.0.0"  # noqa: S104
     port: int = 8900
-    transport: str = "sse"
+    transport: str = "streamable-http"
 
     @classmethod
     def from_env(cls) -> "SidecarConfig":
@@ -68,7 +68,9 @@ class SidecarConfig:
         token_filename = os.environ.get("SIDECAR_TOKEN_FILENAME", ".git-sidecar-token")
         host = os.environ.get("SIDECAR_HOST", "0.0.0.0")  # noqa: S104
         port = int(os.environ.get("SIDECAR_PORT", "8900"))
-        transport = _parse_transport(os.environ.get("SIDECAR_TRANSPORT", "sse"))
+        transport = _parse_transport(
+            os.environ.get("SIDECAR_TRANSPORT", "streamable-http")
+        )
 
         return cls(
             projects_dir=projects_dir,

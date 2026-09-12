@@ -109,7 +109,9 @@ def test_server_rejects_a_bad_token_over_the_transport(
 )
 def test_container_serves_every_tool(expected_tools):
     """The built image serves the full tool surface over its default transport."""
-    assert asyncio.run(_session_tools(CONTAINER_URL, "sse")) == set(expected_tools)
+    assert asyncio.run(_session_tools(CONTAINER_URL, "streamable-http")) == set(
+        expected_tools
+    )
 
 
 @pytest.mark.skipif(
@@ -124,7 +126,10 @@ def test_container_runs_a_tool():
     """
     result = asyncio.run(
         _session_call(
-            CONTAINER_URL, "sse", "git_status", {"repo": REPO, "token": TOKEN}
+            CONTAINER_URL,
+            "streamable-http",
+            "git_status",
+            {"repo": REPO, "token": TOKEN},
         )
     )
 

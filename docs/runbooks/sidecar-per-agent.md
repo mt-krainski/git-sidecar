@@ -88,7 +88,12 @@ sudo docker run -d --name "git-sidecar-$AGENT" --restart unless-stopped \
   "git-sidecar:$AGENT"
 ```
 
-Expected: the container is running and `curl -fsS "http://127.0.0.1:$PORT/sse" -m 1` answers.
+Expected: the container is running and `/mcp` returns an HTTP response. A response with status
+400 or 406 is expected for a GET request without MCP session headers.
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:$PORT/mcp" --max-time 5
+```
 
 The mount and `PROJECTS_DIR` must name the same path. That is what makes worktrees work, and it
 sets how repositories are addressed: a `repo` argument is the path from `PROJECTS_DIR` down, so
@@ -129,11 +134,10 @@ so git would not carry it, and the tool copies it in.
 
 ## 5. Register the endpoint with the agent's MCP client
 
-This deployment leaves the server on its default transport, so the transport is `sse` and the
-path is `/sse`. As the agent user:
+This deployment uses the default Streamable HTTP transport at `/mcp`. As the agent user:
 
 ```bash
-claude mcp add --transport sse git-sidecar "http://127.0.0.1:$PORT/sse"
+claude mcp add --transport http git-sidecar "http://127.0.0.1:$PORT/mcp"
 ```
 
 Expected: the client lists `git-sidecar` as connected.

@@ -77,7 +77,7 @@ class TestSidecarConfig:
         assert cfg.token_filename == ".git-sidecar-token"
         assert cfg.host == "0.0.0.0"
         assert cfg.port == 8900
-        assert cfg.transport == "sse"
+        assert cfg.transport == "streamable-http"
 
     def test_from_env(self, monkeypatch):
         """Load config from environment variables."""
@@ -115,7 +115,13 @@ class TestSidecarConfig:
         assert cfg.projects_dir == default.projects_dir
         assert cfg.allowed_branch_prefixes == default.allowed_branch_prefixes
         assert cfg.token_filename == default.token_filename
-        assert cfg.transport == default.transport
+        assert cfg.transport == "streamable-http"
+
+    def test_from_env_accepts_explicit_sse(self, monkeypatch):
+        """An explicit SSE setting selects the compatibility transport."""
+        monkeypatch.setenv("SIDECAR_TRANSPORT", "sse")
+
+        assert SidecarConfig.from_env().transport == "sse"
 
     def test_from_env_rejects_an_unsupported_transport(self, monkeypatch):
         """A bad SIDECAR_TRANSPORT stops the server at startup, not mid-serve."""

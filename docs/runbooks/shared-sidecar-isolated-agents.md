@@ -358,12 +358,11 @@ No second `gh auth login` — the credential volumes are unchanged.
 
 ## Part 3 — connect an agent's MCP client
 
-This deployment leaves the server on its default transport, so any MCP client that speaks SSE
-works. With Claude Code, register the sidecar at user scope
-(available in every project), **as the agent user**:
+This deployment uses the default Streamable HTTP transport at `/mcp`. With Claude Code, register
+the sidecar at user scope (available in every project), **as the agent user**:
 
 ```bash
-claude mcp add --transport sse -s user git-sidecar http://127.0.0.1:8900/sse
+claude mcp add --transport http -s user git-sidecar http://127.0.0.1:8900/mcp
 ```
 
 The agent addresses repos as `<agent>/<repo>` (e.g. `agent-01/my-repo`), authenticating
@@ -384,7 +383,7 @@ of what the container can reach on the host.
 ```bash
 sudo docker ps --filter name=git-sidecar           # Up, published on 127.0.0.1:8900
 sudo docker logs git-sidecar | tail                # serving on 0.0.0.0:8900
-curl -fsS http://127.0.0.1:8900/sse -m 1 || true   # endpoint reachable (SSE stream)
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8900/mcp --max-time 5
 
 # Ownership proof: a file the sidecar writes into an agent's repo is group-owned by that
 # agent and group-writable, so the agent can edit it; other agents are not in the group.
@@ -392,6 +391,9 @@ sudo docker exec git-sidecar sh -c 'touch /projects/agent-01/.sidecar-probe; ls 
 ls -l /home/agent-01/Projects/.sidecar-probe       # -rw-rw---- gitsidecar agent-01
 sudo rm /home/agent-01/Projects/.sidecar-probe
 ```
+
+An HTTP response from `/mcp` confirms the server is listening. A response with status 400 or 406
+is expected for a GET request without MCP session headers.
 
 ## Notes & caveats
 
