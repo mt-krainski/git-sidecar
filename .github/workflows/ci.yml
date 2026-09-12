@@ -52,7 +52,7 @@ jobs:
     # deployment runs. A dependency that resolves differently under
     # `uv sync --frozen --no-dev` shows up here and nowhere else.
     env:
-      SIDECAR_CONTAINER_URL: http://127.0.0.1:8900/sse
+      SIDECAR_CONTAINER_URL: http://127.0.0.1:8900/mcp
 
     steps:
       - name: Check out repository
@@ -92,7 +92,7 @@ jobs:
         run: |
           for _ in $(seq 1 120); do
             code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-              http://127.0.0.1:8900/messages/ || true)
+              http://127.0.0.1:8900/mcp || true)
             if [ "$code" != "000" ]; then
               exit 0
             fi
